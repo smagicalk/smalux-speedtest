@@ -1,3 +1,4 @@
+/* 全站设计令牌：颜色保持高对比、低装饰，适合持续查看测速数据的管理界面。 */
 :root {
   color-scheme: light;
   --bg: #f5f7f8;
@@ -15,6 +16,7 @@
   letter-spacing: 0;
 }
 
+/* 基础元素与按钮采用统一盒模型，防止边框和动态内容改变布局尺寸。 */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
 button, input, textarea, select { font: inherit; letter-spacing: 0; }
@@ -22,6 +24,7 @@ button, .button-link { min-height: 38px; border: 1px solid transparent; border-r
 button:disabled { opacity: .55; cursor: not-allowed; }
 a { color: inherit; }
 
+/* 顶部导航固定在视口内，长表格滚动时仍可快速返回或刷新。 */
 .topbar { position: sticky; z-index: 10; top: 0; height: 58px; padding: 0 max(20px, calc((100vw - 1240px) / 2)); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); }
 .brand, .brand-block { display: flex; align-items: center; gap: 10px; text-decoration: none; }
 .brand-mark { display: inline-grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; background: var(--text); color: #fff; font-weight: 800; }
@@ -29,6 +32,7 @@ a { color: inherit; }
 .top-actions, .task-actions, .form-actions { display: flex; align-items: center; gap: 8px; }
 .top-actions form { margin: 0; }
 
+/* 工作区使用无卡片的分段布局，概览和操作表格共享同一内容宽度。 */
 .workspace { width: min(1240px, calc(100% - 40px)); margin: 0 auto 72px; }
 .summary { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
 .summary div { padding: 24px 20px 22px 0; }
@@ -41,6 +45,7 @@ h1 { font-size: 1.45rem; }
 h2 { font-size: 1.2rem; }
 .section-heading p { margin: 4px 0 0; color: var(--muted); font-size: .88rem; }
 
+/* 数据表在窄屏保留列宽并横向滚动，避免测速字段被强行压缩或互相覆盖。 */
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); border-radius: 7px; }
 table { width: 100%; min-width: 760px; border-collapse: collapse; }
 th, td { height: 48px; padding: 9px 13px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
@@ -57,6 +62,7 @@ tbody tr:hover { background: #fafcfc; }
 .tag { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; color: #445158; font-size: .76rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }
 
+/* 命令按钮按主操作、普通操作、危险操作区分语义，而非仅靠文字说明。 */
 .primary { background: var(--accent); color: #fff; }
 .primary:hover { background: var(--accent-dark); }
 .quiet, .button-link { border-color: var(--line); background: var(--surface); color: var(--text); text-decoration: none; }
@@ -66,6 +72,7 @@ tbody tr:hover { background: #fafcfc; }
 .icon-button { width: 38px; padding: 0; border-color: var(--line); background: var(--surface); font-size: 1.25rem; line-height: 1; }
 .full { width: 100%; }
 
+/* 创建任务表单在桌面端使用两列，长输入和订阅地址始终占满整行。 */
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field { display: grid; gap: 6px; }
 .field.wide { grid-column: 1 / -1; }
@@ -86,10 +93,12 @@ legend { margin-bottom: 9px; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
 
+/* Client 创建与一次性 Token 展示使用原生 dialog，自动获得焦点约束与 backdrop。 */
 dialog { width: min(480px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 22px; box-shadow: 0 20px 60px rgba(23,33,38,.18); }
 dialog::backdrop { background: rgba(23,33,38,.36); }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 
+/* 登录页是唯一居中面板；进入管理端后恢复高密度工作区布局。 */
 .login-page { display: grid; min-height: 100vh; place-items: center; background: #edf1f2; }
 .login-shell { width: min(390px, calc(100% - 32px)); }
 .login-shell .brand-block { margin-bottom: 20px; }
@@ -98,6 +107,7 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
 .login-form label { display: block; margin-bottom: 7px; font-size: .82rem; font-weight: 700; }
 .login-form input { margin-bottom: 16px; }
 
+/* 任务详情将身份、实时进度和结果分为连续的全宽信息带。 */
 .task-header { display: flex; min-height: 128px; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
 .task-header h1 { max-width: 760px; margin-top: 5px; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .eyebrow { color: var(--muted); font-size: .78rem; font-weight: 750; text-transform: uppercase; }
@@ -110,6 +120,7 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
 .rate { font-variant-numeric: tabular-nums; font-weight: 700; }
 .error-text { max-width: 260px; overflow: hidden; color: var(--danger); text-overflow: ellipsis; }
 
+/* 移动端将操作和表单改为单列；结果表仍由 .table-wrap 提供横向浏览。 */
 @media (max-width: 760px) {
   .topbar { padding: 0 14px; }
   .workspace { width: min(100% - 28px, 1240px); }
