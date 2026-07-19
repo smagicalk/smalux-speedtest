@@ -39,3 +39,16 @@ go run ./client \
 For production, terminate TLS at a reverse proxy and configure clients with a `wss://` URL.
 
 Supported URI families are Shadowsocks, VMess, VLESS, Trojan, SOCKS5, HTTP, SSH, AnyTLS, Hysteria, Hysteria2 and TUIC. Naive is intentionally excluded because sing-box embeds large per-platform Cronet libraries for that outbound.
+
+## Source layout
+
+| Module | Responsibility |
+| --- | --- |
+| `client/`, `server/` | Small executable entry points and process lifecycle |
+| `internal/clientapp` | WebSocket connection, task worker, speedtest execution and sing-box runtime |
+| `internal/importer` | Subscription decoding and protocol-specific URI normalization |
+| `internal/model`, `internal/wire` | Shared domain models and WebSocket envelopes |
+| `internal/serverapp` | HTTP routes, authentication, task APIs, WebSocket hub and SSE events |
+| `internal/store` | SQLite migration, Client credentials, tasks and result persistence |
+| `internal/subscription` | SSRF-protected remote subscription fetching |
+| `internal/serverapp/web` | Embedded dashboard, live task view and PNG report module |
