@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -61,6 +62,19 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 	}
 	if _, err := database.AuthenticateClient(ctx, token); err == nil {
 		t.Fatal("revoked token was accepted")
+	}
+	// Upgrade 前已经通过认证的连接仍可能在撤销后发送 hello；条件更新必须拒绝它。
+	if err := database.UpdateClientHello(ctx, client.ID, model.Hello{Name: "late-client"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("revoked client updated hello: %v", err)
+	}
+	// CreateTask 在自己的事务中再次检查 Enabled，堵住服务层校验与提交之间的竞态；
+	// 失败事务也不能留下没有目标的父任务。
+	revokedTask := Task{ID: model.NewID(), Status: "queued", CandidateCount: 1, TopN: 1, ProxyCount: 1, CreatedAt: now()}
+	if err := database.CreateTask(ctx, revokedTask, []string{client.ID}); err == nil {
+		t.Fatal("task was created for a revoked client")
+	}
+	if _, err := database.GetTask(ctx, revokedTask.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("failed task transaction left parent row: %v", err)
 	}
 }
 
@@ -131,5 +145,9 @@ func TestOpenMarksInterruptedTasksFailed(t *testing.T) {
 	stored, err := second.GetTask(ctx, task.ID)
 	if err != nil || stored.Status != "failed" {
 		t.Fatalf("unexpected task after restart: %+v %v", stored, err)
+	}
+	completed, failed, canceled, total, err := second.TargetSummary(ctx, task.ID)
+	if err != nil || completed != 0 || failed != 1 || canceled != 0 || total != 1 {
+		t.Fatalf("interrupted targets were not failed: completed=%d failed=%d canceled=%d total=%d err=%v", completed, failed, canceled, total, err)
 	}
 }

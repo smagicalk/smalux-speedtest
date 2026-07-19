@@ -22,6 +22,18 @@ func (s *Store) migrate(ctx context.Context) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		// telegram_users 是 Telegram Bot 的授权白名单。owner 由服务启动配置同步，
+		// 普通授权只允许管理 is_owner=0 的行；用户名仅用于展示，身份判断始终使用 ID。
+		`CREATE TABLE IF NOT EXISTS telegram_users (
+			telegram_id INTEGER PRIMARY KEY CHECK(telegram_id > 0),
+			username TEXT NOT NULL DEFAULT '',
+			display_name TEXT NOT NULL DEFAULT '',
+			is_owner INTEGER NOT NULL DEFAULT 0 CHECK(is_owner IN (0,1)),
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		// 部分唯一索引让 is_owner=0 的普通用户不受限制，同时从 schema 层保证 owner 唯一。
+		`CREATE UNIQUE INDEX IF NOT EXISTS telegram_users_owner_idx ON telegram_users(is_owner) WHERE is_owner=1`,
 		// clients 仅保存不可逆 token_hash，明文令牌只在 CreateClient 返回一次。
 		`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,
@@ -93,8 +105,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	// 任务的代理配置只存在内存中，进程重启后不可能可靠恢复 queued/running 任务。
-	// 将其显式终结可避免管理界面永久显示“运行中”。已完成任务不受影响。
-	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', error='server restarted before task completed', finished_at=? WHERE status IN ('queued','running')`, now())
+	// 先终结这些任务的活动目标，再更新父任务，避免详情页在重启后仍显示
+	// queued/running Client。迁移在服务开放请求前执行，此时不存在并发读写。
+	const restartDetail = "server restarted before task completed"
+	if _, err := s.db.ExecContext(ctx, `UPDATE task_targets SET status='failed',error=?
+		WHERE status IN ('queued','running') AND EXISTS(
+			SELECT 1 FROM tasks WHERE tasks.id=task_targets.task_id AND tasks.status IN ('queued','running'))`, restartDetail); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', error=?, finished_at=? WHERE status IN ('queued','running')`, restartDetail, now())
 	return err
 }
 

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // CreateTask 原子地写入任务摘要和全部目标 Client。
 //
@@ -23,8 +26,19 @@ func (s *Store) CreateTask(ctx context.Context, task Task, clientIDs []string) e
 		return err
 	}
 	for _, clientID := range clientIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO task_targets(task_id,client_id,status) VALUES(?,?,'queued')`, task.ID, clientID); err != nil {
+		// 目标插入与 Enabled 检查处于同一事务；管理员并发撤销时，两次写事务
+		// 会由 SQLite 串行化，避免为已经撤销的 Client 创建新目标。
+		result, err := tx.ExecContext(ctx, `INSERT INTO task_targets(task_id,client_id,status)
+			SELECT ?,id,'queued' FROM clients WHERE id=? AND enabled=1`, task.ID, clientID)
+		if err != nil {
 			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			return fmt.Errorf("client %s does not exist or is revoked", clientID)
 		}
 	}
 	return tx.Commit()

@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"smalux-speedtest/internal/importer"
-	"smalux-speedtest/internal/model"
-	"smalux-speedtest/internal/store"
 )
 
 // listTasks 返回最近 100 个任务摘要，避免管理页面一次读取无限历史记录。
@@ -22,102 +18,29 @@ func (a *App) listTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tasks)
 }
 
-// createTask 导入代理、校验测速参数与目标 Client，然后创建并下发一个测速任务。
-//
-// 持久化边界需要特别注意：store.CreateTask 只保存任务计数、参数和目标 Client 状态；
-// parsed.Proxies 中可能含密码、UUID、私钥等字段，只进入随后构造的 Assignment，并由 Hub
-// 保存在运行内存中。任务结束或进程退出后不会从数据库恢复这些完整代理配置。
+// createTask 解码管理页面请求，再把与入口无关的创建流程交给 startTask。
+// Telegram Bot 也调用同一服务，从而共享订阅限制、协议解析、参数校验和调度语义。
 func (a *App) createTask(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Source          string   `json:"source"`
-		SubscriptionURL string   `json:"subscription_url"`
-		ClientIDs       []string `json:"client_ids"`
-		CandidateCount  int      `json:"candidate_count"`
-		TopN            int      `json:"top_n"`
-		Threads         int      `json:"threads"`
-	}
+	var input taskRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if len(input.ClientIDs) == 0 {
-		writeError(w, http.StatusBadRequest, errors.New("select at least one client"))
-		return
-	}
-	// 远程订阅与直接粘贴内容可同时存在，两者合并后走同一套格式/base64 解析逻辑。
-	// Fetcher 负责 URL 和响应体安全限制，避免处理器直接发起不受约束的服务器端请求。
-	if input.SubscriptionURL != "" {
-		content, err := a.fetcher.Fetch(r.Context(), input.SubscriptionURL)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		if input.Source != "" {
-			input.Source += "\n"
-		}
-		input.Source += content
-	}
-	// Parse 会尽可能解析每一条代理并同时收集逐条错误。只要至少有一个代理有效，任务
-	// 仍可创建，解析错误则随响应返回供管理员修正无效条目。
-	parsed := importer.Parse(input.Source)
-	if len(parsed.Proxies) == 0 {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "没有可测速的代理", "import_errors": parsed.Errors})
-		return
-	}
-	// 0 表示前端未指定参数，应用服务端默认值；显式越界值不会被静默纠正。
-	if input.CandidateCount == 0 {
-		input.CandidateCount = 10
-	}
-	if input.TopN == 0 {
-		input.TopN = 3
-	}
-	if input.Threads == 0 {
-		input.Threads = 4
-	}
-	if input.CandidateCount < 1 || input.CandidateCount > 50 || input.TopN < 1 || input.TopN > 3 || input.TopN > input.CandidateCount || input.Threads < 1 || input.Threads > 32 {
-		writeError(w, http.StatusBadRequest, errors.New("candidate_count must be 1-50, top_n must be 1-3, and threads must be 1-32"))
-		return
-	}
-	clients, err := a.store.ListClients(r.Context())
+	created, err := a.startTask(r.Context(), input)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	// 从数据库快照验证目标是否存在且未撤销。是否在线不影响创建：离线 Client 在本进程
-	// 内重连后，Hub 会继续派发处于 queued 的任务。
-	validClients := make(map[string]bool)
-	for _, client := range clients {
-		validClients[client.ID] = client.Enabled
-	}
-	// 保留提交顺序并去重，确保目标计数、状态聚合和实际下发集合一致。
-	uniqueIDs := make([]string, 0, len(input.ClientIDs))
-	seen := make(map[string]bool)
-	for _, id := range input.ClientIDs {
-		if !validClients[id] {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("client %s does not exist or is revoked", id))
+		var requestError *taskRequestError
+		if errors.As(err, &requestError) {
+			if len(requestError.ImportErrors) > 0 {
+				writeJSON(w, requestError.Status, map[string]any{"error": requestError.Error(), "import_errors": requestError.ImportErrors})
+			} else {
+				writeError(w, requestError.Status, requestError)
+			}
 			return
 		}
-		if !seen[id] {
-			seen[id] = true
-			uniqueIDs = append(uniqueIDs, id)
-		}
-	}
-	// 先持久化不含代理凭据的任务骨架，再把完整 Assignment 注册到 Hub。这样 Hub 中的
-	// 运行态始终有对应数据库记录；若 AddTask 后服务崩溃，未完成任务不会泄露代理配置。
-	taskID := model.NewID()
-	task := store.Task{
-		ID: taskID, Status: "queued", CandidateCount: input.CandidateCount, TopN: input.TopN, Threads: input.Threads,
-		ProxyCount: len(parsed.Proxies), ClientCount: len(uniqueIDs), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	if err := a.store.CreateTask(r.Context(), task, uniqueIDs); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	assignment := model.Assignment{
-		TaskID: taskID, Proxies: parsed.Proxies, CandidateCount: input.CandidateCount, TopN: input.TopN, Threads: input.Threads, TimeoutSeconds: 600,
-	}
-	a.hub.AddTask(assignment, uniqueIDs)
-	writeJSON(w, http.StatusCreated, map[string]any{"task": task, "import_errors": parsed.Errors})
+	writeJSON(w, http.StatusCreated, map[string]any{"task": created.Task, "import_errors": created.ImportErrors})
 }
 
 // getTask 返回一个任务摘要及其所有已持久化测速结果，用于详情页首次加载和手动刷新。
@@ -176,6 +99,8 @@ func (a *App) taskEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
+		case <-a.hub.Done():
+			return
 		}
 	}
 }
@@ -196,7 +121,7 @@ func (a *App) resultsCSV(w http.ResponseWriter, r *http.Request) {
 	_ = writer.Write([]string{"client_id", "proxy", "protocol", "address", "server_id", "server", "latency_ms", "jitter_ms", "download_mbps", "upload_mbps", "error", "created_at"})
 	for _, result := range results {
 		_ = writer.Write([]string{
-			csvCell(result.ClientID), csvCell(result.ProxyName), result.Protocol, result.MaskedAddress, result.SpeedServerID,
+			csvCell(result.ClientID), csvCell(result.ProxyName), result.Protocol, result.MaskedAddress, csvCell(result.SpeedServerID),
 			csvCell(result.SpeedServerName), formatFloat(result.LatencyMS), formatFloat(result.JitterMS),
 			formatFloat(result.DownloadBPS / 1_000_000), formatFloat(result.UploadBPS / 1_000_000), csvCell(result.Error), result.CreatedAt,
 		})

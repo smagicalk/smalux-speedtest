@@ -109,8 +109,9 @@ func (c *Client) connect(parent context.Context) error {
 		return err
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "client shutdown")
-	// 限制服务端单条消息大小，避免异常或恶意帧无限占用客户端内存。
-	ws.SetReadLimit(2 << 20)
+	// Assignment 可能承载接近 5 MiB 的订阅解析结果。服务端在落库前按同一协议常量
+	// 校验编码大小，Client 在此设置对应硬上限，既接收合法批量又避免无界内存占用。
+	ws.SetReadLimit(wire.MaxServerToClientMessageBytes)
 	connected := &connection{ws: ws, canceled: make(map[string]bool)}
 	// 应用层握手补充客户端身份信息。HTTP Upgrade 成功不代表协议兼容，必须继续校验
 	// Welcome 的消息类型与协议版本。

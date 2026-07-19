@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 
 	"smalux-speedtest/internal/model"
 )
@@ -32,8 +34,36 @@ func (s *Store) SaveResult(ctx context.Context, result model.SpeedResult) error 
 // 查询字段只包含 masked_address，不包含任何代理认证材料。Client 被撤销后行仍保留，
 // 因此历史结果仍可展示；名称取当前值而非执行任务时的快照。
 func (s *Store) ListResults(ctx context.Context, taskID string) ([]model.SpeedResult, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.task_id,r.client_id,c.name,r.proxy_id,r.proxy_name,r.protocol,r.masked_address,r.speed_server_id,r.speed_server_name,r.speed_server_host,r.country,r.sponsor,
-		r.latency_ms,r.jitter_ms,r.download_bps,r.upload_bps,r.duration_ms,r.error,r.created_at FROM results r JOIN clients c ON c.id=r.client_id WHERE r.task_id=? ORDER BY r.proxy_name,r.latency_ms`, taskID)
+	return s.listResults(ctx, taskID, 0)
+}
+
+// ListResultsLimited 为图片等有固定展示上限的调用方只读取前 limit 条。
+// limit 必须在 1-500 内，防止调用方误传大值绕过内存边界。
+func (s *Store) ListResultsLimited(ctx context.Context, taskID string, limit int) ([]model.SpeedResult, error) {
+	if limit < 1 || limit > 500 {
+		return nil, fmt.Errorf("result limit must be between 1 and 500")
+	}
+	return s.listResults(ctx, taskID, limit)
+}
+
+// CountResults 返回任务完整结果数，使图片页脚能显示“前 N 条/共 M 条”，
+// 而不必先把 M 条结果全部扫描到 Go 内存。
+func (s *Store) CountResults(ctx context.Context, taskID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM results WHERE task_id=?`, taskID).Scan(&count)
+	return count, err
+}
+
+func (s *Store) listResults(ctx context.Context, taskID string, limit int) ([]model.SpeedResult, error) {
+	query := `SELECT r.task_id,r.client_id,c.name,r.proxy_id,r.proxy_name,r.protocol,r.masked_address,r.speed_server_id,r.speed_server_name,r.speed_server_host,r.country,r.sponsor,
+		r.latency_ms,r.jitter_ms,r.download_bps,r.upload_bps,r.duration_ms,r.error,r.created_at FROM results r JOIN clients c ON c.id=r.client_id WHERE r.task_id=? ORDER BY r.proxy_name,r.proxy_id,c.name,r.client_id,r.latency_ms`
+	var rows *sql.Rows
+	var err error
+	if limit > 0 {
+		rows, err = s.db.QueryContext(ctx, query+` LIMIT ?`, taskID, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, query, taskID)
+	}
 	if err != nil {
 		return nil, err
 	}

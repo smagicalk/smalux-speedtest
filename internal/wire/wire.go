@@ -7,6 +7,14 @@ import (
 )
 
 const (
+	// MaxClientToServerMessageBytes 限制 Client 上报的单条消息。结果和进度都远小于
+	// 2 MiB；保留该上限可约束持有合法 Token 的异常 Client 占用服务端内存。
+	MaxClientToServerMessageBytes = 2 << 20
+	// MaxServerToClientMessageBytes 与已发布的协议版本 1 Client 读上限保持一致。
+	// 任务创建前会以相同常量检查最终 Envelope，避免新 Server 向旧 Client 下发其
+	// 无法读取的消息。若以后需要扩大上限，应升级协议版本或在 hello 中显式协商。
+	MaxServerToClientMessageBytes = 2 << 20
+
 	// TypeHello 由客户端在连接建立后发送，载荷为 model.Hello。
 	TypeHello = "client.hello"
 	// TypeWelcome 由服务端确认客户端身份和协议版本，载荷为 model.Welcome。
@@ -62,6 +70,13 @@ func New(messageType, taskID string, payload any) (Envelope, error) {
 		TaskID:    taskID,
 		Payload:   raw,
 	}, nil
+}
+
+// EncodedSize 返回 Envelope 作为 WebSocket JSON 文本消息时的字节数。
+// 任务服务用它在持久化前执行与 Client SetReadLimit 一致的精确尺寸检查。
+func EncodedSize(message Envelope) (int, error) {
+	encoded, err := json.Marshal(message)
+	return len(encoded), err
 }
 
 // Decode 将 Envelope.Payload 解码为调用方指定的类型 T。

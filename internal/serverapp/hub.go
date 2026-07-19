@@ -49,20 +49,34 @@ type Hub struct {
 	mu sync.RWMutex
 	// peers 以 Client ID 为键，每个 Client 同时只保留最新一条连接。
 	peers map[string]*peer
+	// revokedClients 是本进程已完成撤销的永久标记。撤销没有恢复语义，因此标记无需
+	// 删除；它与 peers 同锁，使握手注册和撤销在线性化顺序上只能有一个胜出。
+	revokedClients map[string]struct{}
 	// tasks 只包含当前进程内仍活跃、且需要保留敏感 Assignment 的任务。
 	tasks map[string]*runtimeTask
 	// subscribers 按 Task ID 保存 SSE 事件 channel 集合。
 	subscribers map[string]map[chan taskEvent]struct{}
+
+	// connectionMu 与 connectionWG 跟踪包括握手阶段在内的全部 WebSocket。
+	// 它们与 mu 分离，使 Shutdown 等待读循环时不占用 Hub 状态锁。
+	connectionMu sync.Mutex
+	connections  map[*websocket.Conn]struct{}
+	connectionWG sync.WaitGroup
+	closing      bool
+	shutdown     chan struct{}
 }
 
 // NewHub 创建一个没有在线 Client、活动任务和 SSE 订阅者的 Hub。
 func NewHub(store *store.Store, logger *slog.Logger) *Hub {
 	return &Hub{
-		store:       store,
-		log:         logger,
-		peers:       make(map[string]*peer),
-		tasks:       make(map[string]*runtimeTask),
-		subscribers: make(map[string]map[chan taskEvent]struct{}),
+		store:          store,
+		log:            logger,
+		peers:          make(map[string]*peer),
+		revokedClients: make(map[string]struct{}),
+		tasks:          make(map[string]*runtimeTask),
+		subscribers:    make(map[string]map[chan taskEvent]struct{}),
+		connections:    make(map[*websocket.Conn]struct{}),
+		shutdown:       make(chan struct{}),
 	}
 }
 
@@ -93,9 +107,16 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	// 限制单条消息读取大小，防止异常 Client 通过超大 JSON 占用服务端内存。
-	conn.SetReadLimit(2 << 20)
-	defer conn.Close(websocket.StatusNormalClosure, "connection closed")
+	if !h.trackConnection(conn) {
+		conn.CloseNow()
+		return
+	}
+	defer func() {
+		conn.Close(websocket.StatusNormalClosure, "connection closed")
+		h.untrackConnection(conn)
+	}()
+	// Client 上报的结果和进度无需承载批量代理，使用较小的协议方向上限。
+	conn.SetReadLimit(wire.MaxClientToServerMessageBytes)
 
 	// 要求 Client 在 10 秒内发送首个 hello，防止只完成 Upgrade 却不握手的空闲连接。
 	helloCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -118,11 +139,8 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	client.Name, client.Version, client.OS, client.Arch, client.Labels = hello.Name, hello.Version, hello.OS, hello.Arch, hello.Labels
 	connected := &peer{client: client, conn: conn}
-	// register 可能替换同一 Client 的旧连接；defer unregister 通过指针身份检查，确保
-	// 旧连接退出时不会误删刚登记的新连接。
-	h.register(connected)
-	defer h.unregister(connected)
-
+	// welcome 必须是服务端首帧。写入成功前不把 peer 暴露给 Hub，否则并发
+	// AddTask 可能抢先发出 task.assign，使 Client 把正常连接判定为协议错误。
 	welcome, _ := wire.New(wire.TypeWelcome, "", model.Welcome{ClientID: client.ID})
 	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
 	if err := connected.send(writeCtx, welcome); err != nil {
@@ -130,6 +148,12 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeCancel()
+	// register 可能替换同一 Client 的旧连接；defer unregister 通过指针身份检查，确保
+	// 旧连接退出时不会误删刚登记的新连接。
+	if !h.register(connected) {
+		return
+	}
+	defer h.unregister(connected)
 	// welcome 写成功后才补发积压任务，保证 Client 已得知服务端确认的 Client ID。
 	h.dispatchQueued(client.ID)
 	h.log.Info("client connected", "client_id", client.ID, "name", hello.Name, "remote", r.RemoteAddr)

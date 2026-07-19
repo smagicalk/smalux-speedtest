@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,9 @@ func main() {
 	listen := flag.String("listen", env("SMALUX_LISTEN", ":8080"), "HTTP listen address")
 	database := flag.String("db", env("SMALUX_DATABASE", "smalux-speedtest.db"), "SQLite database path")
 	logLevel := flag.String("log-level", env("SMALUX_LOG_LEVEL", "info"), "debug, info, warn or error")
+	// Bot Token 刻意只从环境变量读取，避免明文秘密出现在进程命令行和进程列表中。
+	telegramOwnerID := flag.Int64("telegram-owner-id", envInt64("SMALUX_TELEGRAM_OWNER_ID", 0), "Telegram owner numeric user ID")
+	telegramAPIBaseURL := flag.String("telegram-api-base-url", env("SMALUX_TELEGRAM_API_BASE_URL", ""), "Telegram Bot API base URL (optional)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
@@ -35,6 +39,7 @@ func main() {
 	defer stop()
 	application, err := serverapp.New(ctx, serverapp.Config{
 		Listen: *listen, DatabasePath: *database, AdminPassword: os.Getenv("SMALUX_ADMIN_PASSWORD"), Logger: logger,
+		TelegramBotToken: os.Getenv("SMALUX_TELEGRAM_BOT_TOKEN"), TelegramOwnerID: *telegramOwnerID, TelegramAPIBaseURL: *telegramAPIBaseURL,
 	})
 	if err != nil {
 		logger.Error("initialize server", "error", err)
@@ -83,4 +88,18 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// envInt64 读取十进制整数环境变量；缺失或格式错误时返回 fallback。
+// Telegram 配置启用后，serverapp.New 还会对 Owner ID 做严格正数校验。
+func envInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

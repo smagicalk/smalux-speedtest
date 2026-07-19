@@ -1,9 +1,17 @@
-// exportResultImage 在浏览器内生成完整 PNG，不把结果再次上传给服务端。
-// 报告使用固定 1800px 表格宽度保证列对齐，并按实际结果数动态扩展高度。
+// exportResultImage 在浏览器内生成 PNG，不把结果再次上传给服务端。
+// 报告使用固定 1800px 表格宽度保证列对齐，并限制为 72 行，避免超大任务生成超过
+// 浏览器 Canvas 尺寸或内存上限的图片；完整结果数仍会显示在页脚且可通过 CSV 导出。
 export function exportResultImage(taskData, results, taskID) {
   if (!taskData || results.length === 0) return;
-  // 先按代理和 Client 分组，再按延迟排列同组测速节点，便于生成类似合并单元格的报告。
-  const sorted = [...results].sort((a, b) => `${a.proxy_name}|${a.client_name}`.localeCompare(`${b.proxy_name}|${b.client_name}`) || a.latency_ms - b.latency_ms);
+  // 名称相同时继续按稳定 ID 排序，保证不同代理/Client 不会交错成多个视觉分组。
+  const allSorted = [...results].sort((a, b) =>
+    String(a.proxy_name).localeCompare(String(b.proxy_name)) ||
+    String(a.proxy_id).localeCompare(String(b.proxy_id)) ||
+    String(a.client_name).localeCompare(String(b.client_name)) ||
+    String(a.client_id).localeCompare(String(b.client_id)) ||
+    Number(a.latency_ms || 0) - Number(b.latency_ms || 0)
+  );
+  const sorted = allSorted.slice(0, 72);
   // 列宽之和即画布宽度。固定尺寸避免内容和字体加载造成列宽抖动。
   const columns = [70, 260, 180, 120, 300, 130, 130, 190, 190, 230];
   const headers = ['序号', '代理节点', 'Client', '协议', 'Speedtest 测速节点', '延迟', '抖动', '下载速度', '上传速度', '状态'];
@@ -121,7 +129,8 @@ export function exportResultImage(taskData, results, taskID) {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#29343a';
   ctx.font = '17px Arial, "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
-  ctx.fillText(`线程=${taskData.threads}   候选节点=${taskData.candidate_count}   上下行节点=Top ${taskData.top_n}   结果=${sorted.length} 条`, 22, footerY + 32);
+  const resultCount = sorted.length < allSorted.length ? `${sorted.length} / ${allSorted.length}` : String(allSorted.length);
+  ctx.fillText(`线程=${taskData.threads}   候选节点=${taskData.candidate_count}   上下行节点=Top ${taskData.top_n}   结果=${resultCount} 条`, 22, footerY + 32);
   ctx.fillStyle = '#66737a';
   ctx.font = '15px Arial, "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
   ctx.fillText(`测试时间：${new Date(taskData.created_at).toLocaleString()}   测试结果仅供参考，以实际网络情况为准`, 22, footerY + 72);

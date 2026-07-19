@@ -83,12 +83,23 @@ func (s *Store) AuthenticateClient(ctx context.Context, token string) (Client, e
 }
 
 // UpdateClientHello 保存 Client 最近一次握手上报的名称、标签、版本和运行平台。
-// 此更新不触碰身份令牌及启用状态。
+// 此更新不触碰身份令牌及启用状态，但只允许仍启用的 Client 更新。WebSocket 在
+// Upgrade 后再次调用本方法，可堵住“初次认证成功、随后凭据被撤销”的握手窗口。
 func (s *Store) UpdateClientHello(ctx context.Context, id string, hello model.Hello) error {
 	labels, _ := json.Marshal(hello.Labels)
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET name=?,labels_json=?,version=?,os=?,arch=?,last_seen=? WHERE id=?`,
+	result, err := s.db.ExecContext(ctx, `UPDATE clients SET name=?,labels_json=?,version=?,os=?,arch=?,last_seen=? WHERE id=? AND enabled=1`,
 		hello.Name, string(labels), hello.Version, hello.OS, hello.Arch, now(), id)
-	return err
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // TouchClient 刷新 Client 的最后在线时间，通常由心跳处理调用。

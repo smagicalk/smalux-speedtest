@@ -26,6 +26,13 @@ type Config struct {
 	DatabasePath string
 	// AdminPassword 只在数据库尚未初始化管理员密码时用于引导创建管理员。
 	AdminPassword string
+	// TelegramBotToken 是 BotFather 签发的令牌。为空时 Telegram Bot 完全禁用。
+	TelegramBotToken string
+	// TelegramOwnerID 是启动时指定的唯一最高权限 Telegram 用户数字 ID。
+	// 启用 Bot 时必须为正数，数据库中的 owner 会以该值为准幂等同步。
+	TelegramOwnerID int64
+	// TelegramAPIBaseURL 用于测试或自建 Bot API Server；远程地址必须使用 HTTPS。
+	TelegramAPIBaseURL string
 	// Logger 接收 HTTP、连接与调度日志；为 nil 时使用 slog.Default。
 	Logger *slog.Logger
 }
@@ -44,6 +51,8 @@ type App struct {
 	template *template.Template
 	// sessions 是仅驻留内存的管理员登录会话表；进程重启后全部失效。
 	sessions *sessionStore
+	// telegram 为可选 Bot 后台任务；未配置 Token 和 Owner ID 时保持 nil。
+	telegram *telegramRuntime
 	// server 是实际提供路由的标准库 HTTP Server。
 	server *http.Server
 }
@@ -81,6 +90,10 @@ func New(ctx context.Context, config Config) (*App, error) {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
+	if err := app.startTelegram(ctx); err != nil {
+		database.Close()
+		return nil, err
+	}
 	return app, nil
 }
 
@@ -90,15 +103,26 @@ func (a *App) ListenAndServe() error {
 	return a.server.ListenAndServe()
 }
 
-// Shutdown 先停止接收 HTTP 请求、等待在途请求结束，再关闭 SQLite 连接。
-// HTTP 关闭错误优先返回，否则返回数据库关闭错误。
+// Shutdown 同时开始停止 Bot 和 HTTP；两者退出后再关闭 Hub WebSocket、
+// 终结内存任务，最后关闭 SQLite。任一等待超时都保留数据库连接，避免
+// 仍在运行的读循环或定时器访问已关闭存储。
 func (a *App) Shutdown(ctx context.Context) error {
-	err := a.server.Shutdown(ctx)
-	storeErr := a.store.Close()
-	if err != nil {
+	a.cancelTelegram()
+	// 先通知 Hub 关闭 WebSocket/SSE，否则 http.Server.Shutdown 会等待长连接
+	// 直到超时。数据库和任务此时仍保留，供在途 HTTP/Bot 请求收尾。
+	a.hub.BeginShutdown()
+	httpErr := a.server.Shutdown(ctx)
+	telegramErr := a.waitTelegram(ctx)
+	if httpErr != nil {
+		return httpErr
+	}
+	if telegramErr != nil {
+		return telegramErr
+	}
+	if err := a.hub.Shutdown(ctx); err != nil {
 		return err
 	}
-	return storeErr
+	return a.store.Close()
 }
 
 // routes 构建服务端完整路由表，并在最外层统一记录请求日志。
