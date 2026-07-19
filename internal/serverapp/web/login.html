@@ -1,0 +1,26 @@
+{{define "login.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · Smalux Speedtest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <div class="brand-block">
+      <span class="brand-mark">S</span>
+      <div><strong>Smalux Speedtest</strong><small>分布式代理测速</small></div>
+    </div>
+    <form class="login-form" method="post" action="/login">
+      <h1>管理员登录</h1>
+      {{with .Error}}<p class="alert error">{{.}}</p>{{end}}
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button class="primary full" type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}

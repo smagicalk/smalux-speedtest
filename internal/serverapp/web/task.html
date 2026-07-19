@@ -1,0 +1,39 @@
+{{define "task.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{.CSRF}}">
+  <meta name="task-id" content="{{.TaskID}}">
+  <title>任务详情 · Smalux Speedtest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
+    <a class="quiet button-link" href="/">返回任务列表</a>
+  </header>
+  <main class="workspace">
+    <section class="task-header">
+      <div><span class="eyebrow">测速任务</span><h1 id="task-id">{{.TaskID}}</h1><div id="task-meta" class="meta-line"></div></div>
+      <div class="task-actions"><button id="export-image" class="quiet" type="button">导出图片</button><a class="quiet button-link" href="/api/tasks/{{.TaskID}}/results.csv">导出 CSV</a><button id="cancel-task" class="danger" type="button">取消任务</button></div>
+    </section>
+    <section class="progress-band">
+      <div class="progress-copy"><strong id="progress-phase">等待 Client</strong><span id="progress-message">任务已进入队列</span></div>
+      <div class="progress-track"><span id="progress-bar"></span></div>
+    </section>
+    <section class="section">
+      <div class="section-heading"><div><h2>测速结果</h2><p id="result-count">0 条结果</p></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>代理</th><th>Client</th><th>协议</th><th>测速节点</th><th>延迟</th><th>抖动</th><th>下载</th><th>上传</th><th>状态</th></tr></thead>
+          <tbody id="results-body"><tr><td colspan="9" class="empty">等待测速结果</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/static/task.js" defer></script>
+</body>
+</html>
+{{end}}
