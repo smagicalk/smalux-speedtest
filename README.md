@@ -11,8 +11,11 @@ make build
 Windows client:
 
 ```bash
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildvcs=false -o smalux-client.exe ./client
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildvcs=false -tags with_utls -o smalux-client.exe ./client
 ```
+
+The client must be built with the `with_utls` tag. Reality and TLS fingerprint
+outbounds require this sing-box feature; `make build` enables it by default.
 
 ## Run the server
 
@@ -64,7 +67,7 @@ The server uses an embedded portable font for reports. Set `SMALUX_REPORT_FONT` 
 ## Run a client
 
 ```bash
-go run ./client \
+go run -tags with_utls ./client \
   -server ws://127.0.0.1:8080/ws/client \
   -token CLIENT_TOKEN \
   -name shanghai-01 \
