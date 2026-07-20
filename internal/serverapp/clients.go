@@ -10,7 +10,8 @@ import (
 // listClients 返回持久化 Client 信息，并合并 Hub 当前进程观察到的在线状态。
 // Online 是瞬时运行态，不写入数据库；LastSeen 等历史信息仍由 store 提供。
 func (a *App) listClients(w http.ResponseWriter, r *http.Request) {
-	clients, err := a.store.ListClients(r.Context())
+	// 已撤销 Client 仍保留在数据库供历史结果关联，但不应继续出现在当前管理列表。
+	clients, err := a.store.ListEnabledClients(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

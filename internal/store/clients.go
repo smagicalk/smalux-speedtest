@@ -122,9 +122,23 @@ func (s *Store) RevokeClient(ctx context.Context, id string) error {
 	return nil
 }
 
-// ListClients 返回管理界面可见的 Client 元数据，明确不查询 token_hash。
+// ListClients 返回全部 Client 元数据，包含已撤销行；任务校验和历史关联需要这份
+// 完整快照。查询明确不包含 token_hash。
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients ORDER BY name`)
+	return s.listClients(ctx, ``)
+}
+
+// ListEnabledClients 只返回仍可用于新任务和管理页面展示的 Client。
+// 撤销操作保留数据库行以满足历史结果外键，因此调用方若只需要当前可用节点，
+// 必须使用本方法而不是在 UI 层猜测 enabled 字段。
+func (s *Store) ListEnabledClients(ctx context.Context) ([]Client, error) {
+	return s.listClients(ctx, ` WHERE enabled=1`)
+}
+
+// listClients 共享 Client 元数据扫描逻辑；whereClause 只由本文件中的固定常量传入，
+// 不接受外部输入，避免把筛选条件拼接成 SQL 注入入口。
+func (s *Store) listClients(ctx context.Context, whereClause string) ([]Client, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients`+whereClause+` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

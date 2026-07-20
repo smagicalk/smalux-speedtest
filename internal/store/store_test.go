@@ -60,6 +60,17 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 	if err := database.RevokeClient(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
+	activeClients, err := database.ListEnabledClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activeClients) != 0 {
+		t.Fatalf("revoked client remained in enabled list: %+v", activeClients)
+	}
+	allClients, err := database.ListClients(ctx)
+	if err != nil || len(allClients) != 1 || allClients[0].Enabled {
+		t.Fatalf("revoked client history row was unexpectedly removed: %+v, %v", allClients, err)
+	}
 	if _, err := database.AuthenticateClient(ctx, token); err == nil {
 		t.Fatal("revoked token was accepted")
 	}
