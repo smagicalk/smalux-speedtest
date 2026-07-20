@@ -8,19 +8,30 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-page">
-  <!-- 登录表单由服务端直接处理，失败时重新渲染同一模板并显示通用错误。 -->
+  <!-- 登录表单由服务端直接处理；用户名和密码错误始终使用同一提示。 -->
   <main class="login-shell">
-    <div class="brand-block">
-      <span class="brand-mark">S</span>
-      <div><strong>Smalux Speedtest</strong><small>分布式代理测速</small></div>
-    </div>
-    <form class="login-form" method="post" action="/login">
-      <h1>管理员登录</h1>
-      {{with .Error}}<p class="alert error">{{.}}</p>{{end}}
-      <label for="password">密码</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-      <button class="primary full" type="submit">登录</button>
-    </form>
+    <section class="login-brand-panel" aria-label="Smalux Speedtest">
+      <div class="brand-block login-brand">
+        <span class="brand-mark">S</span>
+        <div><strong>Smalux Speedtest</strong><small>分布式代理测速</small></div>
+      </div>
+      <div class="login-brand-copy">
+        <span class="login-kicker">CONTROL PLANE</span>
+        <h1>测速调度与结果管理</h1>
+      </div>
+      <span class="login-system-state"><i aria-hidden="true"></i> 管理服务</span>
+    </section>
+    <section class="login-access">
+      <form class="login-form" method="post" action="/login">
+        <header><span class="eyebrow">管理员访问</span><h2>登录控制台</h2></header>
+        {{with .Error}}<p class="alert error" role="alert">{{.}}</p>{{end}}
+        <label for="username">用户名</label>
+        <input id="username" name="username" type="text" value="{{.Username}}" autocomplete="username" minlength="3" maxlength="32" required autofocus>
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" maxlength="72" required>
+        <button class="primary full" type="submit">登录</button>
+      </form>
+    </section>
   </main>
 </body>
 </html>

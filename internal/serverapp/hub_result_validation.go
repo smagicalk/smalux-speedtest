@@ -10,12 +10,10 @@ import (
 )
 
 const (
-	maxResultServerIDRunes   = 128
 	maxResultNameRunes       = 256
 	maxResultHostRunes       = 256
 	maxResultCountryRunes    = 64
 	maxResultSponsorRunes    = 256
-	maxResultErrorRunes      = 1024
 	maxResultDelayMS         = 3_600_000
 	maxResultSpeedBPS        = 10_000_000_000_000
 	defaultResultDurationMax = 10 * time.Minute
@@ -29,9 +27,13 @@ type resultProxyIdentity struct {
 }
 
 func resultIdentityFromProxy(proxy model.ProxySpec) resultProxyIdentity {
+	protocol := model.NormalizeResultProtocol(proxy.Protocol)
 	return resultProxyIdentity{
-		name:          boundedResultText(proxy.Name, maxResultNameRunes),
-		protocol:      boundedResultText(proxy.Protocol, 32),
+		// Assignment names may come from an importer, an API caller or an older
+		// integration. Re-apply the shared rule before the value enters task state;
+		// this also protects progress SSE, which is emitted before SaveResult.
+		name:          boundedResultText(model.NormalizeProxyName(protocol, proxy.Name, proxy.Server), maxResultNameRunes),
+		protocol:      protocol,
 		maskedAddress: boundedResultText(model.MaskAddress(proxy.Server, proxy.Port), maxResultHostRunes),
 	}
 }
@@ -51,12 +53,20 @@ func (t *runtimeTask) validateResult(clientID string, result model.SpeedResult) 
 	result.ProxyName = identity.name
 	result.Protocol = identity.protocol
 	result.MaskedAddress = identity.maskedAddress
-	result.SpeedServerID = boundedResultText(result.SpeedServerID, maxResultServerIDRunes)
-	result.SpeedServerName = boundedResultText(result.SpeedServerName, maxResultNameRunes)
-	result.SpeedServerHost = boundedResultText(result.SpeedServerHost, maxResultHostRunes)
-	result.Country = boundedResultText(result.Country, maxResultCountryRunes)
-	result.Sponsor = boundedResultText(result.Sponsor, maxResultSponsorRunes)
-	result.Error = boundedResultText(result.Error, maxResultErrorRunes)
+	var assignedProxy model.ProxySpec
+	for _, proxy := range t.assignment.Proxies {
+		if proxy.ID == result.ProxyID {
+			assignedProxy = proxy
+			break
+		}
+	}
+	if assignedProxy.ID == "" {
+		return model.SpeedResult{}, "", false
+	}
+	normalizeResultMetadata(&result, assignedProxy)
+	// Error 来自远程 Client。固定类别白名单比正则脱敏更可靠：任意旧版或恶意
+	// Client 的原始错误都会折叠为通用文本，不能把节点配置带入持久化结果。
+	result.Error = model.NormalizeResultError(result.Error)
 	result.LatencyMS = boundedMetric(result.LatencyMS, maxResultDelayMS)
 	result.JitterMS = boundedMetric(result.JitterMS, maxResultDelayMS)
 	result.DownloadBPS = boundedMetric(result.DownloadBPS, maxResultSpeedBPS)

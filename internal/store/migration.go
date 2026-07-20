@@ -13,11 +13,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	statements := []string{
 		// WAL 允许读取与写入更好地并行；单进程仍以一个连接串行访问数据库。
 		`PRAGMA journal_mode=WAL`,
+		// UPDATE/DELETE 时覆盖旧记录槽，降低升级清洗后的敏感原文残留风险。
+		`PRAGMA secure_delete=ON`,
 		// task_targets/results 的外键约束依赖此连接级开关。
 		`PRAGMA foreign_keys=ON`,
 		// 短暂写锁冲突时等待，而不是立即向 API 返回 SQLITE_BUSY。
 		`PRAGMA busy_timeout=5000`,
-		// settings 用于少量服务端配置，目前包含 bcrypt 管理员密码哈希。
+		// settings 只保存幂等迁移标记；旧版管理员哈希会迁移到 admin_users 后删除。
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -101,20 +103,39 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate database: %w", err)
 		}
 	}
+	// 管理员表独立执行兼容迁移：旧版本仅在 settings 保存一个 bcrypt
+	// 哈希，新版本将它转换为默认 admin 用户且不覆盖后续新增账户。
+	if err := s.migrateAdminUsers(ctx); err != nil {
+		return fmt.Errorf("migrate administrator users: %w", err)
+	}
 	if err := s.ensureColumn(ctx, "tasks", "threads", "INTEGER NOT NULL DEFAULT 4"); err != nil {
 		return err
 	}
 	// 任务的代理配置只存在内存中，进程重启后不可能可靠恢复 queued/running 任务。
 	// 先终结这些任务的活动目标，再更新父任务，避免详情页在重启后仍显示
 	// queued/running Client。迁移在服务开放请求前执行，此时不存在并发读写。
-	const restartDetail = "server restarted before task completed"
+	const restartDetail = taskDetailServerRestarted
 	if _, err := s.db.ExecContext(ctx, `UPDATE task_targets SET status='failed',error=?
 		WHERE status IN ('queued','running') AND EXISTS(
 			SELECT 1 FROM tasks WHERE tasks.id=task_targets.task_id AND tasks.status IN ('queued','running'))`, restartDetail); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', error=?, finished_at=? WHERE status IN ('queued','running')`, restartDetail, now())
-	return err
+	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', error=?, finished_at=? WHERE status IN ('queued','running')`, restartDetail, now()); err != nil {
+		return err
+	}
+	if err := s.scrubLegacySensitiveData(ctx); err != nil {
+		return err
+	}
+	if err := s.scrubLegacyProxyNames(ctx); err != nil {
+		return err
+	}
+	if err := s.scrubLegacyClientMetadata(ctx); err != nil {
+		return err
+	}
+	if err := s.scrubLegacyTimestamps(ctx); err != nil {
+		return err
+	}
+	return s.purgeLegacyStorage(ctx)
 }
 
 // ensureColumn 为旧数据库补充新增列。

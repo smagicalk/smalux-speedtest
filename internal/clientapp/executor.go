@@ -2,8 +2,6 @@ package clientapp
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"sort"
@@ -45,7 +43,7 @@ func (e *Executor) Execute(ctx context.Context, assignment model.Assignment, pro
 		if err != nil {
 			results = append(results, model.SpeedResult{
 				TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Protocol: proxy.Protocol,
-				MaskedAddress: model.MaskAddress(proxy.Server, proxy.Port), Error: err.Error(), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+				MaskedAddress: model.MaskAddress(proxy.Server, proxy.Port), Error: executionResultError(err), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			})
 			continue
 		}
@@ -60,7 +58,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 	// 每个代理使用独立实例，既隔离连接池和协议状态，也确保测试结束后释放底层会话。
 	instance, outbound, err := startBox(ctx, proxy.Outbound)
 	if err != nil {
-		return nil, fmt.Errorf("start sing-box: %w", err)
+		return nil, executionError(errProxyInitialization, err)
 	}
 	defer instance.Close()
 
@@ -94,14 +92,14 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 	progress(model.Progress{TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "获取测速节点", Message: "Speedtest.net"})
 	servers, err := client.FetchServerListContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetch speedtest servers: %w", err)
+		return nil, executionError(errSpeedServerDiscovery, err)
 	}
 	// 只对前 CandidateCount 个候选节点做 Ping，限制探测耗时和外部请求数量。
 	if len(servers) > assignment.CandidateCount {
 		servers = servers[:assignment.CandidateCount]
 	}
 	if len(servers) == 0 {
-		return nil, errors.New("no speedtest server available")
+		return nil, errNoSpeedServer
 	}
 
 	// 每个候选节点拥有独立 12 秒上限。单点失败不会中止代理测试，只从可用集合剔除。
@@ -122,7 +120,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 		}
 	}
 	if len(available) == 0 {
-		return nil, errors.New("all speedtest latency checks failed")
+		return nil, errLatencyChecks
 	}
 	// 稳定排序在延迟相同时保留 API 返回顺序，随后只对最低延迟的 Top N 节点传输大流量。
 	sort.SliceStable(available, func(i, j int) bool { return available[i].Latency < available[j].Latency })
@@ -172,8 +170,9 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 			DurationMS: time.Since(started).Milliseconds(), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		if downloadErr != nil || uploadErr != nil {
-			// 保留已测得的延迟和速率，同时把一个或两个方向的错误合并到同一结果中。
-			result.Error = errors.Join(downloadErr, uploadErr).Error()
+			// 保留已测得的延迟和速率，但只记录失败方向。底层错误可能包含请求 URL、
+			// 节点地址或网络栈细节，不得经 Result 进入 Server 数据库和导出文件。
+			result.Error = transferResultError(downloadErr, uploadErr)
 		}
 		results = append(results, result)
 		// speedtest Client 会累计 Manager 状态；节点之间重置，避免前一个节点的统计量

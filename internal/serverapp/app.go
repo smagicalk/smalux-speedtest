@@ -83,8 +83,9 @@ func New(ctx context.Context, config Config) (*App, error) {
 	}
 	app.hub = NewHub(database, config.Logger)
 	app.server = &http.Server{
-		Addr:    config.Listen,
-		Handler: app.routes(),
+		Addr:     config.Listen,
+		Handler:  app.routes(),
+		ErrorLog: newSanitizedHTTPErrorLog(config.Logger),
 		// 限制请求头读取时间和大小，降低慢速请求与异常大请求头占用资源的风险。
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -99,7 +100,8 @@ func New(ctx context.Context, config Config) (*App, error) {
 
 // ListenAndServe 启动 HTTP 监听并阻塞到服务关闭或发生监听错误。
 func (a *App) ListenAndServe() error {
-	a.config.Logger.Info("server listening", "address", a.config.Listen, "database", a.config.DatabasePath)
+	// 数据库路径和监听 IP 都属于部署拓扑，成功日志只记录稳定事件名称。
+	a.config.Logger.Info("server listening")
 	return a.server.ListenAndServe()
 }
 
@@ -145,6 +147,10 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/clients", a.requireAdmin(http.HandlerFunc(a.listClients)))
 	mux.Handle("POST /api/clients", a.requireAdmin(a.csrf(http.HandlerFunc(a.createClient))))
 	mux.Handle("DELETE /api/clients/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.revokeClient))))
+	mux.Handle("GET /api/admin-users", a.requireAdmin(http.HandlerFunc(a.listAdminUsers)))
+	mux.Handle("POST /api/admin-users", a.requireAdmin(a.csrf(http.HandlerFunc(a.createAdminUser))))
+	mux.Handle("PATCH /api/admin-users/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.updateAdminUser))))
+	mux.Handle("DELETE /api/admin-users/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.deleteAdminUser))))
 	mux.Handle("GET /api/tasks", a.requireAdmin(http.HandlerFunc(a.listTasks)))
 	mux.Handle("POST /api/tasks", a.requireAdmin(a.csrf(http.HandlerFunc(a.createTask))))
 	mux.Handle("GET /api/tasks/{id}", a.requireAdmin(http.HandlerFunc(a.getTask)))

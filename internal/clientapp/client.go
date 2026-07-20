@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -47,8 +48,9 @@ type Client struct {
 	executor *Executor
 }
 
-// New 校验客户端必填配置并创建执行端。必填值为空、URL 不是 ws/wss、缺少主机或
-// 内嵌凭据时会立即失败，以免进入永远无法认证的重连循环。
+// New 校验客户端必填配置并创建执行端。远程控制面必须使用 wss://；ws:// 仅允许
+// 回环地址，供同机开发和 TLS 反向代理后的本地连接使用。Assignment 含完整代理凭据，
+// 不能依靠文档提示来防止远程明文传输。
 func New(config Config) (*Client, error) {
 	config.ServerURL = strings.TrimSpace(config.ServerURL)
 	config.Token = strings.TrimSpace(config.Token)
@@ -57,13 +59,28 @@ func New(config Config) (*Client, error) {
 		return nil, errors.New("server URL, token and client name are required")
 	}
 	parsedURL, err := url.Parse(config.ServerURL)
-	if err != nil || (parsedURL.Scheme != "ws" && parsedURL.Scheme != "wss") || parsedURL.Host == "" || parsedURL.User != nil {
-		return nil, errors.New("server URL must be an absolute ws:// or wss:// URL without credentials")
+	if err != nil || (parsedURL.Scheme != "ws" && parsedURL.Scheme != "wss") || parsedURL.Host == "" ||
+		parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.ForceQuery || parsedURL.Fragment != "" {
+		return nil, errors.New("server URL must be an absolute ws:// or wss:// URL without credentials, query, or fragment")
+	}
+	if parsedURL.Scheme == "ws" && !isLoopbackHost(parsedURL.Hostname()) {
+		return nil, errors.New("remote server URL must use wss://")
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 	return &Client{config: config, executor: NewExecutor()}, nil
+}
+
+// isLoopbackHost 只接受字面回环 IP 和 localhost。
+// 不解析 DNS，避免攻击者控制的域名在校验时和连接时返回不同地址。
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Run 持续维护到服务端的连接，直到 ctx 被取消。
@@ -81,7 +98,9 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		c.config.Logger.Warn("connection closed", "error", err, "retry_in", delay)
+		// coder/websocket/net/http 错误可能回显带 query 的 ServerURL。日志只保留错误
+		// 类型和退避时间，不记录 URL、Bearer Token 或远端响应原文。
+		c.config.Logger.Warn("connection closed", "error_type", fmt.Sprintf("%T", err), "retry_in", delay)
 		jitter := time.Duration(rand.IntN(500)) * time.Millisecond
 		timer := time.NewTimer(delay + jitter)
 		select {
@@ -138,7 +157,7 @@ func (c *Client) connect(parent context.Context) error {
 		return errors.New("server did not send a valid welcome message")
 	}
 	identity, _ := wire.Decode[model.Welcome](welcome)
-	c.config.Logger.Info("connected to server", "client_id", identity.ClientID, "server", c.config.ServerURL)
+	c.config.Logger.Info("connected to server", "client_id", identity.ClientID)
 
 	// assignments 提供小型缓冲以解耦读循环和测速 worker；errChannel 只负责通知致命的
 	// 写错误。worker 本身仍然一次只执行一个 Assignment。

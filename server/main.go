@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/serverapp"
 )
 
@@ -25,7 +26,9 @@ import (
 func main() {
 	// flag 的默认值来自环境变量，因此配置优先级为“命令行参数 > 环境变量 > 内置值”。
 	// 这种方式既便于容器注入环境变量，也允许运维临时用参数覆盖配置。
-	listen := flag.String("listen", env("SMALUX_LISTEN", ":8080"), "HTTP listen address")
+	// 默认只监听回环，适合由同机 HTTPS 反向代理转发。监听公网地址必须由运维显式
+	// 配置，并同时在网络层保证管理端只经 TLS 入口访问。
+	listen := flag.String("listen", env("SMALUX_LISTEN", "127.0.0.1:8080"), "HTTP listen address")
 	database := flag.String("db", env("SMALUX_DATABASE", "smalux-speedtest.db"), "SQLite database path")
 	logLevel := flag.String("log-level", env("SMALUX_LOG_LEVEL", "info"), "debug, info, warn or error")
 	// Bot Token 刻意只从环境变量读取，避免明文秘密出现在进程命令行和进程列表中。
@@ -42,7 +45,7 @@ func main() {
 		TelegramBotToken: os.Getenv("SMALUX_TELEGRAM_BOT_TOKEN"), TelegramOwnerID: *telegramOwnerID, TelegramAPIBaseURL: *telegramAPIBaseURL,
 	})
 	if err != nil {
-		logger.Error("initialize server", "error", err)
+		logger.Error("initialize server", "error_type", logsafe.ErrorType(err))
 		os.Exit(1)
 	}
 
@@ -56,11 +59,11 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := application.Shutdown(shutdownCtx); err != nil {
-			logger.Error("shutdown server", "error", err)
+			logger.Error("shutdown server", "error_type", logsafe.ErrorType(err))
 		}
 	case err := <-errChannel:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server stopped", "error", err)
+			logger.Error("server stopped", "error_type", logsafe.ErrorType(err))
 			os.Exit(1)
 		}
 	}

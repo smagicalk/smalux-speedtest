@@ -74,6 +74,9 @@ func TestAdminLoginAndCreateClient(t *testing.T) {
 		body, _ := io.ReadAll(response.Body)
 		t.Fatalf("create client returned %d: %s", response.StatusCode, body)
 	}
+	if response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("sensitive response cache policy = %q", response.Header.Get("Cache-Control"))
+	}
 	var result map[string]any
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatal(err)

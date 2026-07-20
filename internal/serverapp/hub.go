@@ -94,6 +94,12 @@ func (h *Hub) Online(clientID string) bool {
 // 认证分两层：HTTP Upgrade 前用数据库中的 Client Bearer Token 验证身份；Upgrade 后首帧
 // 必须是版本匹配且名称非空的 client.hello。管理员 Session Cookie 不参与此端点认证。
 func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Assignment 包含完整代理凭据。只有真实 TLS 连接或同机回环连接才能接收它；
+	// 不能信任公网请求自行提供的 X-Forwarded-Proto。
+	if !secureClientWebSocketRequest(r) {
+		http.Error(w, "secure websocket required", http.StatusUpgradeRequired)
+		return
+	}
 	// 在升级协议前拒绝无效或已撤销 Token，避免为未认证请求分配长连接资源。
 	token := bearerToken(r.Header.Get("Authorization"))
 	client, err := h.store.AuthenticateClient(r.Context(), token)
@@ -132,12 +138,12 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "invalid client.hello")
 		return
 	}
-	// hello 中的版本、平台和标签属于可持久化运行元数据，不包含认证 Token。
+	// Store 只接受归一化后的版本和平台。管理员创建的 Name/Labels 始终权威，远端
+	// Hello 即使持有合法 Bearer Token 也不能用分享链接或 outbound 覆盖它们。
 	if err := h.store.UpdateClientHello(r.Context(), client.ID, hello); err != nil {
 		conn.Close(websocket.StatusInternalError, "failed to register client")
 		return
 	}
-	client.Name, client.Version, client.OS, client.Arch, client.Labels = hello.Name, hello.Version, hello.OS, hello.Arch, hello.Labels
 	connected := &peer{client: client, conn: conn}
 	// welcome 必须是服务端首帧。写入成功前不把 peer 暴露给 Hub，否则并发
 	// AddTask 可能抢先发出 task.assign，使 Client 把正常连接判定为协议错误。
@@ -156,7 +162,9 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer h.unregister(connected)
 	// welcome 写成功后才补发积压任务，保证 Client 已得知服务端确认的 Client ID。
 	h.dispatchQueued(client.ID)
-	h.log.Info("client connected", "client_id", client.ID, "name", hello.Name, "remote", r.RemoteAddr)
+	// 名称可能由部署者自由填写，RemoteAddr 又属于接入方网络身份；连接日志只保留
+	// 随机 Client ID，足以与调度日志关联且不会额外收集这些信息。
+	h.log.Info("client connected", "client_id", client.ID)
 
 	// 每条连接只有此 goroutine 读取；消息写入则统一通过 peer.send 串行化。
 	for {

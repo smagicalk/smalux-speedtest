@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,14 +18,21 @@ func decodeJSON(r *http.Request, target any) error {
 }
 
 // writeJSON 写入统一 JSON Content-Type、状态码和响应体。
+// 管理 API 包含任务结果或一次性 Client Token，任何 JSON 响应都禁止共享缓存保存。
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
 // writeError 使用统一 {"error":"..."} 结构返回错误，便于前端和 API 调用方处理。
 func writeError(w http.ResponseWriter, status int, err error) {
+	if status >= http.StatusInternalServerError {
+		// 数据库、模板或网络错误可能包含路径和远端细节。5xx 响应统一隐藏内部错误；
+		// 调用点若需要诊断，应使用已经过隐私审查的结构化日志字段。
+		err = errors.New("internal server error")
+	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 

@@ -43,7 +43,9 @@ func ParseLink(link string) (model.ProxySpec, error) {
 	// Fragment 不参与网络连接，按分享链接惯例作为用户可读节点名。
 	name, _ := url.PathUnescape(strings.TrimPrefix(u.Fragment, "#"))
 	if name == "" {
-		name = scheme + "-" + u.Hostname()
+		// 默认名称会随测速结果长期保存。不要把真实服务器地址复制到名称中；
+		// 管理员明确提供的 fragment 仍作为可辨识的报告名称保留。
+		name = scheme + "-node"
 	}
 	q := u.Query()
 	// 所有协议使用同一 tag，执行器会将该 outbound 作为本次测速的唯一代理出口。

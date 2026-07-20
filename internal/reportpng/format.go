@@ -108,10 +108,11 @@ func formatSpeed(value float64) string {
 func formatTaskTime(value string) string {
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		if value == "" {
-			return "-"
-		}
-		return limitRunes(value, 64)
+		// CreatedAt normally comes from Store, but reports can also be rendered by
+		// tests or future callers. Never turn an invalid timestamp into visible
+		// text because a restored or manually edited database may contain a URL,
+		// credential, address, or local path in this column.
+		return "-"
 	}
 	return parsed.UTC().Format("2006-01-02 15:04:05 UTC")
 }

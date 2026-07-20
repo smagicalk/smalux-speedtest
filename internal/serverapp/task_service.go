@@ -3,7 +3,6 @@ package serverapp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -54,7 +53,9 @@ func (a *App) startTask(ctx context.Context, input taskRequest) (taskCreation, e
 	if input.SubscriptionURL != "" {
 		content, err := a.fetcher.Fetch(ctx, input.SubscriptionURL)
 		if err != nil {
-			return taskCreation{}, &taskRequestError{Status: http.StatusBadRequest, Message: err.Error()}
+			// 网络库错误可能回显包含鉴权查询参数的完整 URL。控制面只返回固定提示，
+			// Fetcher 的具体失败既不落库也不写日志。
+			return taskCreation{}, &taskRequestError{Status: http.StatusBadRequest, Message: "订阅获取失败，请检查地址后重试"}
 		}
 		if input.Source != "" {
 			input.Source += "\n"
@@ -152,7 +153,7 @@ func (a *App) validateTaskClients(ctx context.Context, requested []string) ([]st
 	seen := make(map[string]bool, len(requested))
 	for _, id := range requested {
 		if !valid[id] {
-			return nil, invalidTaskRequest(http.StatusBadRequest, fmt.Sprintf("client %s does not exist or is revoked", id))
+			return nil, invalidTaskRequest(http.StatusBadRequest, "selected client does not exist or is revoked")
 		}
 		if !seen[id] {
 			seen[id] = true

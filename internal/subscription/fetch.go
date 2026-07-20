@@ -90,20 +90,25 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (string, error) {
 	// 首次请求与后续重定向使用同一套 validateURL 规则；TrimSpace 兼容表单输入。
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return "", fmt.Errorf("parse subscription URL: %w", err)
+		return "", errors.New("subscription URL is invalid")
 	}
 	if err := validateURL(parsed); err != nil {
 		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return "", err
+		return "", errors.New("subscription URL is invalid")
 	}
 	// 固定 User-Agent 便于订阅服务识别客户端，且不携带服务器主机或管理员信息。
 	req.Header.Set("User-Agent", "smalux-speedtest/1")
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch subscription: %w", err)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		// net/http 的错误通常包含完整请求 URL，包括订阅鉴权 query。不要把底层
+		// 错误传给控制面或日志。
+		return "", errors.New("subscription request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -117,7 +122,10 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (string, error) {
 	// 多读一个字节用于区分“恰好 MaxSize”与“实际超限”，同时保证内存分配有硬上限。
 	content, err := io.ReadAll(io.LimitReader(resp.Body, MaxSize+1))
 	if err != nil {
-		return "", err
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", errors.New("subscription response read failed")
 	}
 	if len(content) > MaxSize {
 		return "", errors.New("subscription is larger than 5 MiB")
@@ -157,6 +165,25 @@ func validateURL(value *url.URL) error {
 // 后续若安全策略要求更严格，应在此集中补充拒绝网段。
 func publicAddress(address netip.Addr) bool {
 	address = address.Unmap()
-	return address.IsValid() && !address.IsPrivate() && !address.IsLoopback() && !address.IsLinkLocalUnicast() &&
-		!address.IsLinkLocalMulticast() && !address.IsMulticast() && !address.IsUnspecified()
+	if !address.IsValid() || !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() ||
+		address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
+		return false
+	}
+	// IsPrivate does not include several special-use ranges that a public service
+	// must never fetch: CGNAT, benchmarking, documentation/test networks, IPv4
+	// special-purpose space and IPv6 documentation space.
+	for _, blocked := range []netip.Prefix{
+		netip.MustParsePrefix("100.64.0.0/10"),
+		netip.MustParsePrefix("192.0.0.0/24"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("198.18.0.0/15"),
+		netip.MustParsePrefix("198.51.100.0/24"),
+		netip.MustParsePrefix("203.0.113.0/24"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	} {
+		if blocked.Contains(address) {
+			return false
+		}
+	}
+	return true
 }

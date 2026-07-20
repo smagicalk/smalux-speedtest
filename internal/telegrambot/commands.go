@@ -9,13 +9,15 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"smalux-speedtest/internal/logsafe"
 )
 
 // handleAuthorizationCommand 执行 owner-only 授权名单管理；普通授权用户也无法调用。
 func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, principal Principal, command, payload string) {
 	owner, err := b.authorization.IsOwner(ctx, principal.UserID)
 	if err != nil {
-		b.config.Logger.Warn("telegram owner check failed", "user_id", principal.UserID, "error", err)
+		b.config.Logger.Warn("telegram owner check failed", "user_id", principal.UserID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, message.Chat.ID, "所有者权限校验失败，请稍后重试。")
 		return
 	}
@@ -26,7 +28,7 @@ func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, 
 	if command == "users" {
 		users, err := b.authorization.ListUsers(ctx)
 		if err != nil {
-			b.config.Logger.Warn("telegram authorized user list failed", "error", err)
+			b.config.Logger.Warn("telegram authorized user list failed", "error_type", logsafe.ErrorType(err))
 			b.sendText(ctx, message.Chat.ID, "读取授权名单失败。")
 			return
 		}
@@ -71,7 +73,7 @@ func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, 
 	}
 	if command == "authorize" {
 		if err := b.authorization.AuthorizeUser(ctx, target); err != nil {
-			b.config.Logger.Warn("telegram user authorization failed", "target_user_id", target.TelegramID, "error", err)
+			b.config.Logger.Warn("telegram user authorization failed", "target_user_id", target.TelegramID, "error_type", logsafe.ErrorType(err))
 			b.sendText(ctx, message.Chat.ID, "授权用户失败。")
 			return
 		}
@@ -89,7 +91,7 @@ func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, 
 		return
 	}
 	if err := b.authorization.RevokeUser(ctx, target.TelegramID); err != nil {
-		b.config.Logger.Warn("telegram user revoke failed", "target_user_id", target.TelegramID, "error", err)
+		b.config.Logger.Warn("telegram user revoke failed", "target_user_id", target.TelegramID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, message.Chat.ID, "撤销用户失败。")
 		return
 	}

@@ -125,7 +125,7 @@ func TestTelegramTaskWaitReturnsCompletedSnapshot(t *testing.T) {
 	}
 	if err := application.store.SaveResult(t.Context(), model.SpeedResult{
 		TaskID: task.ID, ClientID: client.ID, ProxyID: "proxy-1", ProxyName: "node", Protocol: "vless",
-		MaskedAddress: "*.example.com:443", SpeedServerID: "server-1", SpeedServerName: "Tokyo",
+		MaskedAddress: "[redacted]:443", SpeedServerID: "server-1", SpeedServerName: "Tokyo",
 		LatencyMS: 42.5, DownloadBPS: 800_000_000, UploadBPS: 200_000_000,
 	}); err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestTelegramTaskWaitReturnsCompletedSnapshot(t *testing.T) {
 		t.Fatalf("unexpected completion payload: %+v", payload)
 	}
 	result := payload.Results[0]
-	if result.ClientID != client.ID || result.ClientName != client.Name || result.MaskedAddress != "*.example.com:443" {
+	if result.ClientID != client.ID || result.ClientName != client.Name || result.MaskedAddress != "[redacted]:443" {
 		t.Fatalf("unexpected persisted result payload: %+v", result)
 	}
 	application.hub.mu.RLock()

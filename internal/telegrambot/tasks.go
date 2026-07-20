@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"smalux-speedtest/internal/logsafe"
 )
 
 // submitTask 校验授权和并发限制，创建任务后异步等待结果。
@@ -21,7 +23,7 @@ func (b *Bot) submitTask(ctx context.Context, message *Message, principal Princi
 	}
 	allowed, err := b.authorization.IsAuthorized(ctx, principal.UserID)
 	if err != nil {
-		b.config.Logger.Warn("telegram authorization failed", "user_id", principal.UserID, "chat_id", principal.ChatID, "error", err)
+		b.config.Logger.Warn("telegram authorization failed", "user_id", principal.UserID, "chat_id", principal.ChatID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, message.Chat.ID, "权限校验失败，请稍后重试。")
 		return
 	}
@@ -82,7 +84,7 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 	completion, err := b.runner.Wait(ctx, taskID)
 	if err != nil {
 		if ctx.Err() == nil {
-			b.config.Logger.Warn("telegram task wait failed", "task_id", taskID, "error", err)
+			b.config.Logger.Warn("telegram task wait failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 			b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 执行失败，请在管理页面查看详情。", taskID))
 		}
 		return
@@ -100,7 +102,7 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 	}
 	image, err := b.renderer.Render(ctx, completion)
 	if err != nil || len(image.Data) == 0 {
-		b.config.Logger.Warn("telegram result rendering failed", "task_id", taskID, "error", err)
+		b.config.Logger.Warn("telegram result rendering failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已完成，但结果图片生成失败。", taskID))
 		return
 	}
@@ -117,7 +119,7 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 	err = b.sendPhotoOrdered(deliveryCtx, chatID, image)
 	deliveryCancel()
 	if err != nil && ctx.Err() == nil {
-		b.config.Logger.Warn("telegram sendPhoto failed", "task_id", taskID, "chat_id", chatID, "error", err)
+		b.config.Logger.Warn("telegram sendPhoto failed", "task_id", taskID, "chat_id", chatID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已完成，但结果图片发送失败。", taskID))
 	}
 }

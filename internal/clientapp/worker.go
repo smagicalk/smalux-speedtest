@@ -20,6 +20,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 		case assignment := <-assignments:
 			// cancel 可能在 Assignment 排队期间到达；开始任务前消费该标记即可避免误执行。
 			if connected.consumeCanceled(assignment.TaskID) {
+				model.EraseAssignment(&assignment)
 				continue
 			}
 			timeout := time.Duration(assignment.TimeoutSeconds) * time.Second
@@ -33,6 +34,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 			if err := connected.send(ctx, ack); err != nil {
 				cancel()
 				connected.clearCurrent(assignment.TaskID)
+				model.EraseAssignment(&assignment)
 				nonBlockingError(errorsChannel, err)
 				connected.ws.CloseNow()
 				return
@@ -52,6 +54,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 				if err != nil {
 					cancel()
 					connected.clearCurrent(assignment.TaskID)
+					model.EraseAssignment(&assignment)
 					nonBlockingError(errorsChannel, err)
 					connected.ws.CloseNow()
 					return
@@ -61,7 +64,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 			// Execute 可能在取消前已经产生部分 Result；这些结果仍会先发送，随后以 Failed
 			// 明确标记任务未完整结束。
 			if err := taskCtx.Err(); err != nil {
-				terminal, _ = wire.New(wire.TypeTaskFailed, assignment.TaskID, model.Failure{TaskID: assignment.TaskID, Error: err.Error()})
+				terminal, _ = wire.New(wire.TypeTaskFailed, assignment.TaskID, model.Failure{TaskID: assignment.TaskID, Error: model.NormalizeTaskFailure(err.Error())})
 			} else {
 				terminal, _ = wire.New(wire.TypeTaskComplete, assignment.TaskID, model.Ack{TaskID: assignment.TaskID})
 			}
@@ -70,6 +73,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 			writeCancel()
 			cancel()
 			connected.clearCurrent(assignment.TaskID)
+			model.EraseAssignment(&assignment)
 			if err != nil {
 				nonBlockingError(errorsChannel, err)
 				connected.ws.CloseNow()

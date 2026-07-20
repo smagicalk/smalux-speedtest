@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/coder/websocket"
+
+	"smalux-speedtest/internal/logsafe"
 )
 
 // register 将新连接设为指定 Client 的唯一活动连接。
@@ -120,7 +122,7 @@ func (h *Hub) requeueTarget(ctx context.Context, taskID, clientID, detail string
 		cancel()
 		if err != nil {
 			task.transition.Unlock()
-			h.log.Warn("persist target requeue failed", "task_id", taskID, "client_id", clientID, "error", err)
+			h.log.Warn("persist target requeue failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
 			return
 		}
 	}

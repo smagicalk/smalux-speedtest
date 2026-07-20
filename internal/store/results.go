@@ -14,9 +14,21 @@ import (
 // 的身份字段。MaskedAddress 应在调用本方法前完成脱敏；该层不会接触也不会保存代理
 // 密码、UUID、分享链接或 outbound JSON。
 func (s *Store) SaveResult(ctx context.Context, result model.SpeedResult) error {
-	if result.CreatedAt == "" {
-		result.CreatedAt = now()
-	}
+	// Client timestamps are untrusted and can be stale, forged or contain a
+	// sentinel. The service assigns the only persisted result timestamp.
+	result.CreatedAt = now()
+	// Store 是最后一道持久化边界。即使未来新增调用方绕过 Hub 校验，也不能把任意
+	// Client 错误、代理地址、测速 Host 或原始服务器 ID 写入 SQLite。
+	result.Protocol = model.NormalizeResultProtocol(result.Protocol)
+	result.ProxyID = normalizePersistedProxyID(result.ProxyID)
+	result.ProxyName = model.NormalizeProxyName(result.Protocol, result.ProxyName, "")
+	result.Error = model.NormalizeResultError(result.Error)
+	result.MaskedAddress = normalizePersistedAddress(result.MaskedAddress)
+	result.SpeedServerID = normalizePersistedSpeedServerID(result.SpeedServerID)
+	result.SpeedServerHost = ""
+	result.SpeedServerName = model.NormalizePublicResultLabel(result.SpeedServerName, 256)
+	result.Country = model.NormalizePublicResultLabel(result.Country, 64)
+	result.Sponsor = model.NormalizePublicResultLabel(result.Sponsor, 256)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO results(
 		id,task_id,client_id,proxy_id,proxy_name,protocol,masked_address,speed_server_id,speed_server_name,speed_server_host,country,sponsor,
 		latency_ms,jitter_ms,download_bps,upload_bps,duration_ms,error,created_at
@@ -76,6 +88,20 @@ func (s *Store) listResults(ctx context.Context, taskID string, limit int) ([]mo
 			&result.LatencyMS, &result.JitterMS, &result.DownloadBPS, &result.UploadBPS, &result.DurationMS, &result.Error, &result.CreatedAt); err != nil {
 			return nil, err
 		}
+		// Read-side normalization protects callers if a legacy database is opened
+		// read-only or migration was interrupted before its marker was written.
+		result.ClientName = model.NormalizeClientName(result.ClientName)
+		result.Protocol = model.NormalizeResultProtocol(result.Protocol)
+		result.ProxyID = normalizePersistedProxyID(result.ProxyID)
+		result.ProxyName = model.NormalizeProxyName(result.Protocol, result.ProxyName, "")
+		result.MaskedAddress = normalizePersistedAddress(result.MaskedAddress)
+		result.SpeedServerID = normalizePersistedSpeedServerID(result.SpeedServerID)
+		result.SpeedServerHost = ""
+		result.SpeedServerName = model.NormalizePublicResultLabel(result.SpeedServerName, 256)
+		result.Country = model.NormalizePublicResultLabel(result.Country, 64)
+		result.Sponsor = model.NormalizePublicResultLabel(result.Sponsor, 256)
+		result.Error = model.NormalizeResultError(result.Error)
+		result.CreatedAt = normalizePersistedTimestamp(result.CreatedAt)
 		results = append(results, result)
 	}
 	return results, rows.Err()

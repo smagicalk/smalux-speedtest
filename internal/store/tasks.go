@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
 // CreateTask 原子地写入任务摘要和全部目标 Client。
@@ -11,6 +11,13 @@ import (
 // 任务，或看到引用不存在任务的目标。defer Rollback 在任意提前返回时清理事务；成功
 // Commit 后再次 Rollback 是无害的。ClientCount 从 clientIDs 计算，避免信任调用方字段。
 func (s *Store) CreateTask(ctx context.Context, task Task, clientIDs []string) error {
+	if !validGeneratedID(task.ID) {
+		return errors.New("invalid task ID")
+	}
+	if !validTaskStatus(task.Status) {
+		return errors.New("invalid task status")
+	}
+	task.CreatedAt = now()
 	// 兼容未显式设置线程数的旧调用方，并与 schema 的 DEFAULT 4 保持一致。
 	if task.Threads == 0 {
 		task.Threads = 4
@@ -38,7 +45,7 @@ func (s *Store) CreateTask(ctx context.Context, task Task, clientIDs []string) e
 			return err
 		}
 		if changed == 0 {
-			return fmt.Errorf("client %s does not exist or is revoked", clientID)
+			return errors.New("client does not exist or is revoked")
 		}
 	}
 	return tx.Commit()
@@ -49,6 +56,10 @@ func (s *Store) CreateTask(ctx context.Context, task Task, clientIDs []string) e
 // started_at 只在第一次进入 running 且原值为空时写入；终态会写 finished_at。CASE
 // 表达式使状态与时间在同一条 SQL 中更新，避免并发读取到不一致的中间状态。
 func (s *Store) SetTaskStatus(ctx context.Context, id, status, detail string) error {
+	if !validTaskStatus(status) {
+		return errors.New("invalid task status")
+	}
+	detail = normalizePersistedTaskDetail(detail)
 	startedAt := ""
 	finishedAt := ""
 	if status == "running" {
@@ -64,6 +75,10 @@ func (s *Store) SetTaskStatus(ctx context.Context, id, status, detail string) er
 
 // SetTargetStatus 更新任务中某个 Client 的独立执行状态与错误说明。
 func (s *Store) SetTargetStatus(ctx context.Context, taskID, clientID, status, detail string) error {
+	if !validTargetStatus(status) {
+		return errors.New("invalid target status")
+	}
+	detail = normalizePersistedTaskDetail(detail)
 	_, err := s.db.ExecContext(ctx, `UPDATE task_targets SET status=?,error=? WHERE task_id=? AND client_id=?`, status, detail, taskID, clientID)
 	return err
 }
@@ -113,7 +128,7 @@ func (s *Store) ListTasks(ctx context.Context, limit int) ([]Task, error) {
 		if err := rows.Scan(&task.ID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt); err != nil {
 			return nil, err
 		}
-		tasks = append(tasks, task)
+		tasks = append(tasks, normalizePersistedTaskRead(task))
 	}
 	return tasks, rows.Err()
 }
@@ -123,5 +138,8 @@ func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	var task Task
 	err := s.db.QueryRowContext(ctx, `SELECT id,status,candidate_count,top_n,threads,proxy_count,client_count,error,created_at,started_at,finished_at FROM tasks WHERE id=?`, id).
 		Scan(&task.ID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt)
-	return task, err
+	if err != nil {
+		return Task{}, err
+	}
+	return normalizePersistedTaskRead(task), nil
 }

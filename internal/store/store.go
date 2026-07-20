@@ -21,9 +21,9 @@ type Store struct {
 type Client struct {
 	// ID 是服务端生成且长期稳定的 Client 标识。
 	ID string `json:"id"`
-	// Name 由管理员创建，Client 握手后可上报最新显示名称。
+	// Name 是管理员创建的稳定显示名称；远端 Client Hello 无权覆盖。
 	Name string `json:"name"`
-	// Labels 保存地区、线路或提供商等自由键值元数据。
+	// Labels 是管理员维护的地区、线路或提供商等元数据；远端 Client Hello 无权覆盖。
 	Labels map[string]string `json:"labels,omitempty"`
 	// Version 来自最近一次 Hello 消息，用于识别客户端能力。
 	Version string `json:"version,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -101,5 +102,69 @@ func TestWrappedBase64Subscription(t *testing.T) {
 	result := Parse(wrapped)
 	if len(result.Proxies) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("wrapped subscription was not decoded: %+v", result)
+	}
+}
+
+// TestImportErrorsDoNotExposeInput 覆盖短链接、URL 解析错误和无 scheme 文本。过去按
+// 长度截断会完整回显短密码；现在响应只允许出现协议名和固定错误类别。
+func TestImportErrorsDoNotExposeInput(t *testing.T) {
+	const secret = "credential-should-never-leave-importer"
+	result := Parse("vless://" + secret + "@%zz\n" + secret)
+	if len(result.Errors) != 2 {
+		t.Fatalf("unexpected errors: %+v", result.Errors)
+	}
+	encoded := fmt.Sprintf("%+v", result.Errors)
+	if strings.Contains(encoded, secret) || strings.Contains(encoded, "%zz") {
+		t.Fatalf("import errors exposed source: %s", encoded)
+	}
+	if result.Errors[0].Input != "vless://[redacted]" || result.Errors[1].Input != "[redacted]" {
+		t.Fatalf("unexpected redacted inputs: %+v", result.Errors)
+	}
+}
+
+// TestMissingDisplayNamesDoNotExposeServer 确认缺少用户备注时使用协议级匿名名称。
+// ProxySpec.Server 只用于任务内存和地址掩码，不能被默认名称复制到历史结果。
+func TestMissingDisplayNamesDoNotExposeServer(t *testing.T) {
+	credential := base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:secret"))
+	vmessJSON := `{"add":"private-vmess.example","port":"443","id":"00000000-0000-0000-0000-000000000001"}`
+	links := []struct {
+		link string
+		name string
+	}{
+		{"vless://uuid@private-vless.example:443", "vless-node"},
+		{fmt.Sprintf("ss://%s@private-ss.example:8388", credential), "ss-node"},
+		{"vmess://" + base64.RawStdEncoding.EncodeToString([]byte(vmessJSON)), "vmess-node"},
+	}
+	for _, item := range links {
+		proxy, err := ParseLink(item.link)
+		if err != nil {
+			t.Fatalf("parse %q: %v", item.name, err)
+		}
+		if proxy.Name != item.name || strings.Contains(proxy.Name, proxy.Server) {
+			t.Fatalf("unsafe default name: %+v", proxy)
+		}
+	}
+}
+
+func TestExplicitDisplayNamesRejectSensitiveValues(t *testing.T) {
+	credential := base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:secret"))
+	vmessJSON := `{"add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","ps":"vmess://uuid:password@vmess.example.com:443"}`
+	cases := []struct {
+		link string
+		want string
+	}{
+		{"vless://uuid@vless.example.com:443#vless://uuid:password@vless.example.com:443", "vless-node"},
+		{fmt.Sprintf("ss://%s@ss.example.com:8388#1.2.3.4", credential), "ss-node"},
+		{"vmess://" + base64.RawStdEncoding.EncodeToString([]byte(vmessJSON)), "vmess-node"},
+		{"vless://uuid@vless.example.com:443#Tokyo-01", "Tokyo-01"},
+	}
+	for _, test := range cases {
+		proxy, err := ParseLink(test.link)
+		if err != nil {
+			t.Fatalf("ParseLink(%q): %v", test.link, err)
+		}
+		if proxy.Name != test.want {
+			t.Errorf("ParseLink(%q).Name = %q, want %q", test.link, proxy.Name, test.want)
+		}
 	}
 }

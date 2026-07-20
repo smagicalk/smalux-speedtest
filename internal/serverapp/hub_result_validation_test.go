@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -36,6 +37,9 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	}
 	hub := NewHub(database, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	assignment := testAssignment(taskRecord.ID)
+	assignment.Proxies[0].Name = `vless://uuid:password@secret.example:443/path`
+	assignment.Proxies[0].Server = "secret.example"
+	assignment.Proxies[0].Outbound = []byte(`{"type":"socks","tag":"proxy","server":"secret.example","server_port":1080,"username":"private-user","password":"private-password"}`)
 	hub.AddTask(assignment, []string{client.ID})
 	if started, err := database.StartTarget(t.Context(), taskRecord.ID, client.ID); err != nil || !started {
 		t.Fatalf("StartTarget = %v, %v", started, err)
@@ -57,9 +61,9 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	base := model.SpeedResult{
 		TaskID: taskRecord.ID, ClientID: client.ID, ProxyID: assignment.Proxies[0].ID,
 		ProxyName: "spoofed", Protocol: "spoofed", MaskedAddress: "secret.example:443",
-		SpeedServerID: "server-1", SpeedServerName: strings.Repeat("n", 400),
-		SpeedServerHost: strings.Repeat("h", 400), Country: strings.Repeat("c", 100),
-		Sponsor: strings.Repeat("s", 400), Error: strings.Repeat("e", 1500) + "\n",
+		SpeedServerID: "vless://uuid:password@secret.example:443", SpeedServerName: strings.Repeat("n", 400),
+		SpeedServerHost: "192.0.2.10:443/private/path", Country: `{"password":"private-password"}`,
+		Sponsor: "provider private-password", Error: "vless://uuid:password@secret.example:443",
 		LatencyMS: -1, JitterMS: math.Inf(1), DownloadBPS: maxResultSpeedBPS * 2,
 		UploadBPS: -100, DurationMS: math.MaxInt64, CreatedAt: "client-controlled-time",
 	}
@@ -76,7 +80,7 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	// 原键重发不增加行数，并应更新测量值。
 	duplicate := base
 	duplicate.DownloadBPS = 321
-	duplicate.SpeedServerName = "updated"
+	duplicate.SpeedServerName = strings.Repeat("n", 400)
 	hub.saveResult(t.Context(), connected, duplicate)
 
 	results, err := database.ListResults(t.Context(), taskRecord.ID)
@@ -85,7 +89,18 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	}
 	result := results[0]
 	proxy := assignment.Proxies[0]
-	if result.ProxyName != proxy.Name || result.Protocol != proxy.Protocol || result.MaskedAddress != model.MaskAddress(proxy.Server, proxy.Port) {
+	if value := safePublicResultLabel("vless://uuid:password@secret.example:443", maxResultNameRunes, proxy); value != "" {
+		t.Fatalf("share URI accepted as public metadata: %q", value)
+	}
+	shortCredentialProxy := proxy
+	shortCredentialProxy.Outbound = []byte(`{"type":"socks","tag":"proxy","server":"secret.example","server_port":1080,"username":"u","password":"p"}`)
+	for _, value := range []string{"u", "p", "provider p", "region-u"} {
+		if sanitized := safePublicResultLabel(value, maxResultSponsorRunes, shortCredentialProxy); sanitized != "" {
+			t.Fatalf("short outbound credential accepted as public metadata: %q", sanitized)
+		}
+	}
+	wantProxyName := model.NormalizeProxyName(proxy.Protocol, proxy.Name, proxy.Server)
+	if result.ProxyName != wantProxyName || result.Protocol != proxy.Protocol || result.MaskedAddress != model.MaskAddress(proxy.Server, proxy.Port) {
 		t.Fatalf("client overrode proxy identity: %+v", result)
 	}
 	if result.DownloadBPS != 321 || result.LatencyMS != 0 || result.JitterMS != 0 || result.UploadBPS != 0 {
@@ -94,7 +109,16 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	if result.DurationMS != int64(assignment.TimeoutSeconds)*1000 || result.CreatedAt == "client-controlled-time" {
 		t.Fatalf("duration/time were not bounded: %+v", result)
 	}
-	if utf8.RuneCountInString(result.SpeedServerName) > maxResultNameRunes || utf8.RuneCountInString(result.Error) > maxResultErrorRunes || strings.Contains(result.Error, "\n") {
-		t.Fatalf("result text was not bounded: name=%d error=%d", utf8.RuneCountInString(result.SpeedServerName), utf8.RuneCountInString(result.Error))
+	if utf8.RuneCountInString(result.SpeedServerName) != maxResultNameRunes || result.Error != model.ResultErrorProxyTest || strings.Contains(result.Error, "secret.example") {
+		t.Fatalf("result text was not safely normalized: name=%d error=%q", utf8.RuneCountInString(result.SpeedServerName), result.Error)
+	}
+	if !strings.HasPrefix(result.SpeedServerID, "server-") || strings.Contains(result.SpeedServerID, "vless") || result.SpeedServerHost != "" || result.Country != "" || result.Sponsor != "" {
+		t.Fatalf("untrusted server metadata was persisted: %+v", result)
+	}
+	encoded := fmt.Sprintf("%+v", result)
+	for _, secret := range []string{"vless://", "private-password", "secret.example", "192.0.2.10", "/private/path"} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("persisted result contains %q: %s", secret, encoded)
+		}
 	}
 }

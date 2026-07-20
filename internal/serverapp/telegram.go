@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/telegrambot"
 )
 
@@ -62,7 +63,7 @@ func (a *App) startTelegram(parent context.Context) error {
 	go func() {
 		defer close(runtime.done)
 		if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			a.config.Logger.Error("telegram bot stopped", "error", err)
+			a.config.Logger.Error("telegram bot stopped", "error_type", logsafe.ErrorType(err))
 		}
 	}()
 	a.config.Logger.Info("telegram bot enabled", "owner_user_id", ownerID)

@@ -12,6 +12,8 @@ dist/
 coverage.*
 *.coverprofile
 profile.cov
+.tmp-go-cache/
+.tmp-go-tmp/
 
 # Local Go workspace and environment
 go.work

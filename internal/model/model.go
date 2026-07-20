@@ -4,8 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"net"
-	"strings"
 	"time"
 )
 
@@ -36,7 +34,7 @@ type ProxySpec struct {
 type ImportError struct {
 	// Line 是从 1 开始的输入行号。
 	Line int `json:"line"`
-	// Input 是失败的原始输入。它可能包含代理凭据，只应返回给已认证管理员。
+	// Input 只保留协议 scheme 和 [redacted] 占位符，绝不包含原始分享链接。
 	Input string `json:"input"`
 	// Error 是适合展示给管理员的解析错误文本。
 	Error string `json:"error"`
@@ -105,11 +103,11 @@ type SpeedResult struct {
 	Protocol string `json:"protocol"`
 	// MaskedAddress 是仅供展示的脱敏代理地址，不能用于实际拨号。
 	MaskedAddress string `json:"masked_address"`
-	// SpeedServerID 是 Speedtest.net 节点 ID。
+	// SpeedServerID 由 Client 上报原始 Speedtest.net ID，Server 落库前替换为稳定摘要。
 	SpeedServerID string `json:"speed_server_id,omitempty"`
 	// SpeedServerName 是测速节点所在位置或名称。
 	SpeedServerName string `json:"speed_server_name,omitempty"`
-	// SpeedServerHost 是 speedtest-go 返回的测速节点主机地址。
+	// SpeedServerHost 是 speedtest-go 返回的测速节点主机地址；Server 不持久化该字段。
 	SpeedServerHost string `json:"speed_server_host,omitempty"`
 	// Country 是测速节点国家或地区。
 	Country string `json:"country,omitempty"`
@@ -177,38 +175,13 @@ func NewID() string {
 	return hex.EncodeToString(value[:])
 }
 
-// MaskAddress 在保留端口和有限网络归属信息的同时隐藏代理主机地址。
+// MaskAddress 完全隐藏代理主机地址，只保留端口供结果排查和协议核对。
 //
-// IPv4 仅保留前两个八位组；IPv6 统一替换为占位前缀；域名保留最后两个标签。域名
-// 处理是展示级脱敏，不使用 Public Suffix List，因此对 co.uk 等多级公共后缀不会保留
-// 可注册域名语义。返回值始终采用 net.JoinHostPort 格式，IPv6 占位符会带方括号。
+// 公共服务不能把 IPv4 前缀、IPv6 前缀或域名后缀当成“脱敏后可公开”的信息；这些值
+// 仍可能定位节点。因此 host 参数只用于保持统一调用接口，不参与返回值。
 func MaskAddress(host string, port uint16) string {
-	ip := net.ParseIP(host)
-	if ip4 := ip.To4(); ip4 != nil {
-		return net.JoinHostPort(strings.Join([]string{byteString(ip4[0]), byteString(ip4[1]), "*", "*"}, "."), portString(port))
-	}
-	if ip != nil {
-		return net.JoinHostPort("xxxx:xxxx::", portString(port))
-	}
-	parts := strings.Split(host, ".")
-	if len(parts) > 2 {
-		host = "*." + strings.Join(parts[len(parts)-2:], ".")
-	} else if host != "" {
-		host = "*" + host
-	}
-	return net.JoinHostPort(host, portString(port))
-}
-
-// byteString 将一个 IPv4 八位组转换为十进制文本，供 MaskAddress 组装脱敏地址。
-func byteString(value byte) string {
-	const digits = "0123456789"
-	if value >= 100 {
-		return string([]byte{digits[value/100], digits[(value/10)%10], digits[value%10]})
-	}
-	if value >= 10 {
-		return string([]byte{digits[value/10], digits[value%10]})
-	}
-	return string(digits[value])
+	_ = host
+	return "[redacted]:" + portString(port)
 }
 
 // portString 将 uint16 端口转换为十进制文本；端口 0 明确返回 "0"。

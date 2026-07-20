@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
 )
@@ -52,7 +53,7 @@ func (h *Hub) cancelTask(ctx context.Context, taskID, detail string) error {
 	writeCancel()
 	if err != nil {
 		task.transition.Unlock()
-		h.log.Warn("persist task cancellation failed", "task_id", taskID, "error", err)
+		h.log.Warn("persist task cancellation failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 		return err
 	}
 	h.mu.Lock()
@@ -65,7 +66,7 @@ func (h *Hub) cancelTask(ctx context.Context, taskID, detail string) error {
 				task.targets[clientID] = "canceled"
 			}
 		}
-		task.assignment.Proxies = nil
+		model.EraseAssignment(&task.assignment)
 		delete(h.tasks, taskID)
 	}
 	h.mu.Unlock()

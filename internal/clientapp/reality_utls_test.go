@@ -5,6 +5,7 @@ package clientapp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,15 @@ func TestRealityOutboundInitializesWithUTLS(t *testing.T) {
 
 	instance, _, err := startBox(context.Background(), outbound)
 	if err != nil {
+		// sing-box starts its Linux interface monitor even for a client-only
+		// outbound. Minimal containers and some hosted CI runners deny the
+		// NETLINK_ROUTE subscription with EPERM. That is an environment limit,
+		// not evidence that the uTLS implementation is missing; the latter has
+		// a distinct error and must continue to fail this test.
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "operation not permitted") && strings.Contains(message, "route") {
+			t.Skip("sing-box Reality initialization requires route-monitor permissions in this environment")
+		}
 		t.Fatalf("initialize Reality outbound with uTLS: %v", err)
 	}
 	defer instance.Close()

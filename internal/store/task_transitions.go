@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 )
 
 // TargetTransition 是一次 Client 目标终结后数据库确认的权威状态。
@@ -48,6 +48,7 @@ func (s *Store) StartTarget(ctx context.Context, taskID, clientID string) (bool,
 // RequeueTarget 把活动任务中的 running 目标退回 queued。
 // 条件更新阻止连接关闭清理在任务取消或完成后重新打开目标状态。
 func (s *Store) RequeueTarget(ctx context.Context, taskID, clientID, detail string) (bool, error) {
+	detail = normalizePersistedTaskDetail(detail)
 	result, err := s.db.ExecContext(ctx, `UPDATE task_targets SET status='queued',error=?
 		WHERE task_id=? AND client_id=? AND status='running'
 		AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND status IN ('queued','running'))`, detail, taskID, clientID, taskID)
@@ -62,8 +63,9 @@ func (s *Store) RequeueTarget(ctx context.Context, taskID, clientID, detail stri
 // 事务成功后调用方才可修改 Hub 内存状态，从而避免 SQLite 与 runtimeTask 永久分叉。
 func (s *Store) FinishTarget(ctx context.Context, taskID, clientID, status, detail string) (TargetTransition, error) {
 	if !isTargetTerminal(status) {
-		return TargetTransition{}, fmt.Errorf("invalid terminal target status %q", status)
+		return TargetTransition{}, errors.New("invalid terminal target status")
 	}
+	detail = normalizePersistedTaskDetail(detail)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TargetTransition{}, err
@@ -77,6 +79,7 @@ func (s *Store) FinishTarget(ctx context.Context, taskID, clientID, status, deta
 	if err != nil {
 		return TargetTransition{}, err
 	}
+	currentDetail = normalizePersistedTaskDetail(currentDetail)
 	if isTaskTerminal(currentTask) {
 		if err := tx.Commit(); err != nil {
 			return TargetTransition{}, err
@@ -137,10 +140,10 @@ func aggregateTaskStatus(completed, failed, canceled, total int) (string, string
 		return "canceled", ""
 	}
 	if failed == total {
-		return "failed", "all clients failed"
+		return "failed", taskDetailAllClientsFailed
 	}
 	if failed > 0 || canceled > 0 {
-		return "partial", "some clients did not complete"
+		return "partial", taskDetailSomeClientsIncomplete
 	}
 	return "completed", ""
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"smalux-speedtest/internal/model"
@@ -44,7 +45,8 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 	// 只落库已脱敏地址，随后检查速度值和 JOIN 得到的 ClientName 均能完整返回。
 	result := model.SpeedResult{
 		TaskID: task.ID, ClientID: client.ID, ProxyID: "proxy-1", ProxyName: "node", Protocol: "vless",
-		MaskedAddress: "*.example.com:443", SpeedServerID: "123", LatencyMS: 10, DownloadBPS: 100_000_000,
+		MaskedAddress: "192.0.2.10:443", SpeedServerID: "vless://uuid:password@192.0.2.10:443",
+		SpeedServerHost: "192.0.2.20/private/path", LatencyMS: 10, DownloadBPS: 100_000_000,
 	}
 	if err := database.SaveResult(ctx, result); err != nil {
 		t.Fatal(err)
@@ -52,6 +54,9 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 	results, err := database.ListResults(ctx, task.ID)
 	if err != nil || len(results) != 1 || results[0].DownloadBPS != result.DownloadBPS || results[0].ClientName != client.Name {
 		t.Fatalf("unexpected results: %+v %v", results, err)
+	}
+	if results[0].MaskedAddress != "[redacted]" || results[0].SpeedServerHost != "" || !strings.HasPrefix(results[0].SpeedServerID, "server-") || strings.Contains(results[0].SpeedServerID, "vless") {
+		t.Fatalf("unsafe persistence boundary result: %+v", results[0])
 	}
 	storedTask, err := database.GetTask(ctx, task.ID)
 	if err != nil || storedTask.Threads != 4 {

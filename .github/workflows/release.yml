@@ -1,0 +1,246 @@
+name: Build And Release
+
+on:
+  # A published GitHub Release is the only automatic release trigger. The tag is
+  # checked out explicitly below so a later branch change cannot alter an old release.
+  release:
+    types: [published]
+  # Manual runs are useful for validating cross-compilation before publishing a release.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch, tag, or commit for artifact-only test builds
+        required: true
+        default: vibe-dev
+        type: string
+      version:
+        description: Version for artifact-only test builds
+        required: true
+        default: dev
+        type: string
+      release_tag:
+        description: Optional existing Release tag to upload to; no Release is created
+        required: false
+        default: ''
+        type: string
+
+# Build jobs only need to read the repository. The publish job below requests write
+# access separately and only runs when a real Release target was provided.
+permissions:
+  contents: read
+
+concurrency:
+  group: smalux-release-${{ github.event.release.tag_name || inputs.release_tag || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Uploading to a Release always selects that exact tag. An arbitrary ref is
+      # accepted only when the manual run produces an Actions artifact.
+      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.release_tag != '' && inputs.release_tag || inputs.ref) }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
+
+      - name: Verify release tag and record commit
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            git check-ref-format "refs/tags/$RELEASE_TAG"
+            tag_commit="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
+            if [[ -z "$tag_commit" || "$commit" != "$tag_commit" ]]; then
+              printf 'checked out commit does not match release tag %s\n' "$RELEASE_TAG" >&2
+              exit 1
+            fi
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -buildvcs=false -tags with_utls ./...
+
+  build:
+    name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    env:
+      # Release uploads always embed their exact tag. Artifact-only runs use the
+      # independently supplied test version.
+      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.release_tag != '' && inputs.release_tag || inputs.version) }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Build the exact commit that passed the test job, even if an artifact-only
+          # branch advances while the matrix is starting.
+          ref: ${{ needs.test.outputs.commit }}
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Git tags may contain characters that are unsafe in filenames or Go
+          # linker arguments. Use one portable form for archives and binary metadata.
+          version="${VERSION:-dev}"
+          safe_version="$(printf '%s' "$version" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-' | cut -c1-64)"
+          safe_version="${safe_version:-dev}"
+          archive_base="smalux-speedtest-${safe_version}-${GOOS}-${GOARCH}"
+          package_dir="build/package"
+          rm -rf build
+          mkdir -p "$package_dir"
+          ldflags="-s -w -X main.version=${safe_version}"
+          extension=""
+          if [[ "$GOOS" == "windows" ]]; then
+            extension=".exe"
+          fi
+
+          # Keep CGO disabled so one Ubuntu runner can produce all six targets.
+          # The Client tag is intentional: Reality/fingerprint outbounds require
+          # sing-box's uTLS implementation and must not silently disappear.
+          GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
+            go build -buildvcs=false -trimpath -ldflags "$ldflags" \
+            -o "$package_dir/smalux-server${extension}" ./server
+          GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
+            go build -buildvcs=false -trimpath -tags with_utls -ldflags "$ldflags" \
+            -o "$package_dir/smalux-client${extension}" ./client
+
+          if [[ "$GOOS" == "windows" ]]; then
+            archive="build/${archive_base}.zip"
+            (cd "$package_dir" && zip -q "../${archive_base}.zip" ./*)
+          else
+            archive="build/${archive_base}.tar.gz"
+            tar -C "$package_dir" -czf "$archive" .
+          fi
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "archive_base=${archive_base}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload platform package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.package.outputs.archive_base }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+  collect:
+    name: Collect checksums
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          mapfile -t packages < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort)
+          if (( ${#packages[@]} != 6 )); then
+            printf 'expected six platform packages, found %d\n' "${#packages[@]}" >&2
+            exit 1
+          fi
+          sha256sum "${packages[@]}" > SHA256SUMS
+
+      - name: Upload combined Actions artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smalux-speedtest-release-bundle
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Upload to existing Release
+    needs: [test, collect]
+    # A manual run without release_tag intentionally stops after Actions artifacts;
+    # gh release upload never creates a Release implicitly.
+    if: ${{ github.event_name == 'release' || inputs.release_tag != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      TESTED_COMMIT: ${{ needs.test.outputs.commit }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download combined release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: smalux-speedtest-release-bundle
+          path: release
+
+      - name: Upload assets to the existing Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Verify first so a typo cannot create an unintended Release. GitHub CLI
+          # is maintained by GitHub and is preinstalled on ubuntu-latest runners.
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+          if [[ "$tag_commit" != "$TESTED_COMMIT" ]]; then
+            printf 'release tag moved after testing; expected %s, found %s\n' \
+              "$TESTED_COMMIT" "$tag_commit" >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" --clobber

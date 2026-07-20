@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
 )
@@ -38,10 +39,13 @@ func (h *Hub) handleMessage(ctx context.Context, connected *peer, message wire.E
 			h.setTargetRunning(ctx, message.TaskID, connected)
 		}
 	case wire.TypeTaskProgress:
-		// 进度频率较高且只用于实时展示，因此不写入 SQLite。
+		// 进度频率较高且只用于实时展示，因此不写入 SQLite；所有展示字段仍需由
+		// Assignment 快照覆盖，防止恶意 Client 经 SSE 夹带节点配置。
 		progress, err := wire.Decode[model.Progress](message)
-		if err == nil && progress.TaskID == message.TaskID && h.acceptsProgress(message.TaskID, connected) {
-			h.publish(message.TaskID, taskEvent{Type: "progress", Progress: &progress})
+		if err == nil && progress.TaskID == message.TaskID {
+			if normalized, ok := h.normalizeProgress(message.TaskID, connected, progress); ok {
+				h.publish(message.TaskID, taskEvent{Type: "progress", Progress: &normalized})
+			}
 		}
 	case wire.TypeTaskResult:
 		result, err := wire.Decode[model.SpeedResult](message)
@@ -58,7 +62,8 @@ func (h *Hub) handleMessage(ctx context.Context, connected *peer, message wire.E
 	case wire.TypeTaskFailed:
 		failure, err := wire.Decode[model.Failure](message)
 		if err == nil && failure.TaskID == message.TaskID {
-			h.finishTargetFromPeer(ctx, message.TaskID, connected, "failed", boundedResultText(failure.Error, maxResultErrorRunes))
+			// Failure.Error 同样来自远程 Client，只接受固定任务失败类别。
+			h.finishTargetFromPeer(ctx, message.TaskID, connected, "failed", model.NormalizeTaskFailure(failure.Error))
 		}
 	}
 }
@@ -87,7 +92,7 @@ func (h *Hub) setTargetRunning(ctx context.Context, taskID string, connected *pe
 	transitioned, err := h.store.StartTarget(writeCtx, taskID, clientID)
 	cancel()
 	if err != nil {
-		h.log.Warn("persist running target failed", "task_id", taskID, "client_id", clientID, "error", err)
+		h.log.Warn("persist running target failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
 		return
 	}
 	if !transitioned {
@@ -104,15 +109,6 @@ func (h *Hub) setTargetRunning(ctx context.Context, taskID string, connected *pe
 	task.targets[clientID] = "running"
 	h.mu.Unlock()
 	h.publish(taskID, taskEvent{Type: "status", Status: "running"})
-}
-
-// acceptsProgress 快速检查进度是否来自目标当前连接且目标已 ACK。
-// 进度不改变持久化状态，因此不占用任务转换锁。
-func (h *Hub) acceptsProgress(taskID string, connected *peer) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	task := h.tasks[taskID]
-	return h.peers[connected.client.ID] == connected && task != nil && !task.terminalPending && task.targets[connected.client.ID] == "running"
 }
 
 // currentPeer 在消息解码前拒绝已被替换连接的缓冲帧。

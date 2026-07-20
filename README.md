@@ -19,13 +19,13 @@ outbounds require this sing-box feature; `make build` enables it by default.
 
 ## Run the server
 
-Set the administrator password on the first start. The password hash is kept in SQLite, so later starts do not require the environment variable.
+Set the administrator password on the first start. The initial username is `admin`. Passwords are stored only as bcrypt hashes in SQLite, so later starts do not require the environment variable.
 
 ```bash
-SMALUX_ADMIN_PASSWORD='change-this-password' go run ./server -listen :8080 -db smalux-speedtest.db
+SMALUX_ADMIN_PASSWORD='change-this-password' go run ./server -listen 127.0.0.1:8080 -db smalux-speedtest.db
 ```
 
-Open `http://127.0.0.1:8080`, create a client, and retain the token shown once.
+Open `http://127.0.0.1:8080`, log in, create a client, and retain the token shown once. The dashboard can create, disable, re-enable, and delete additional administrator accounts. It prevents the current session from disabling or deleting itself and always preserves at least one enabled administrator.
 
 Each task can use 1-32 concurrent speedtest connections (4 by default). Completed results can be exported as CSV or as a branded PNG report from the task detail page.
 
@@ -37,7 +37,7 @@ Create a bot with BotFather, keep its token out of the command line, and start t
 SMALUX_ADMIN_PASSWORD='change-this-password' \
 SMALUX_TELEGRAM_BOT_TOKEN='123456:bot-token' \
 go run ./server \
-  -listen :8080 \
+  -listen 127.0.0.1:8080 \
   -db smalux-speedtest.db \
   -telegram-owner-id 123456789
 ```
@@ -67,16 +67,33 @@ The server uses an embedded portable font for reports. Set `SMALUX_REPORT_FONT` 
 ## Run a client
 
 ```bash
-go run -tags with_utls ./client \
+SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' go run -tags with_utls ./client \
   -server ws://127.0.0.1:8080/ws/client \
-  -token CLIENT_TOKEN \
   -name shanghai-01 \
   -labels region=cn-east,provider=example
 ```
 
-For production, terminate TLS at a reverse proxy and configure clients with a `wss://` URL.
+`SMALUX_CLIENT_TOKEN` is the preferred token source and takes precedence when it is non-empty. The `-token` flag remains only as a compatibility fallback; command-line secrets may be visible in process listings and should not be used for new deployments.
+
+For production, terminate TLS at a same-host reverse proxy and configure clients with a `wss://` URL. Both sides reject remote plaintext WebSocket: the Client accepts `ws://` only for `localhost` or literal loopback IP addresses, and the Server upgrades a non-TLS connection only when its direct peer is loopback. A reverse proxy on another host must use a TLS or loopback tunnel for its backend connection.
 
 Supported URI families are Shadowsocks, VMess, VLESS, Trojan, SOCKS5, HTTP, SSH, AnyTLS, Hysteria, Hysteria2 and TUIC. Naive is intentionally excluded because sing-box embeds large per-platform Cronet libraries for that outbound.
+
+## Privacy boundary
+
+Raw share links, subscription URLs and bodies, and normalized sing-box outbound JSON are never written to SQLite. They remain in task memory only while dispatching and running a test (at most 10 minutes), then their writable outbound buffers are overwritten on a best-effort basis. Client tokens are stored only as hashes.
+
+Historical results retain an ordinary user-provided node display name, protocol, a fully redacted address with only its port, selected public Speedtest.net server, measurements, and fixed error categories. Names shaped like a URI, IP/host, path, JSON, UUID, token, or credential are replaced with an anonymous protocol label; links without a display name use the same fallback. Human-readable names such as a region, provider, or site identifier remain unchanged.
+
+Logs omit proxy configuration, request bodies, subscription URLs, raw connection errors, client names, remote client addresses, listener addresses, and local database paths. Existing databases are scrubbed once on upgrade: normal node names remain, sensitive-looking names become anonymous protocol labels, and old address fragments, invalid timestamps, untrusted Speedtest metadata, and arbitrary task/result errors are removed. The legacy single-admin hash is migrated into the administrator table and its duplicate setting is deleted. The upgrade then rewrites SQLite and truncates its WAL to purge obsolete local pages; separately managed backups are outside this process.
+
+The complete outbound must still travel from Server to an authorized Client. Public deployments must use HTTPS/WSS and protect administrator and Client credentials. Proxy links sent to the optional Telegram Bot also remain subject to Telegram's own message-retention policy; use the authenticated web interface when that is unsuitable.
+
+## Release builds
+
+Publishing a GitHub Release triggers `.github/workflows/release.yml`. The workflow checks out that Release's tag, builds Server and the uTLS-enabled Client for Linux, Windows, and macOS on amd64 and arm64, then uploads six archives plus `SHA256SUMS` to the existing Release.
+
+The same workflow can be started manually from GitHub Actions with a branch, tag, or commit and a version. With an empty `release_tag`, packages are kept only as a downloadable Actions artifact for testing. Supplying an existing `release_tag` ignores the arbitrary source `ref`, builds that exact tested tag, and uploads to the matching existing Release; the workflow never creates a Release implicitly. All third-party Actions are pinned to full commits.
 
 ## Source layout
 
@@ -85,7 +102,7 @@ Supported URI families are Shadowsocks, VMess, VLESS, Trojan, SOCKS5, HTTP, SSH,
 | `client/`, `server/` | Small executable entry points and process lifecycle |
 | `internal/clientapp` | WebSocket connection, task worker, speedtest execution and sing-box runtime |
 | `internal/importer` | Subscription decoding and protocol-specific URI normalization |
-| `internal/model`, `internal/wire` | Shared domain models and WebSocket envelopes |
+| `internal/model`, `internal/wire`, `internal/logsafe` | Shared domain models, WebSocket envelopes and message-free error log fields |
 | `internal/serverapp` | HTTP routes, authentication, task APIs, WebSocket hub and SSE events |
 | `internal/store` | SQLite migration, Client credentials, tasks and result persistence |
 | `internal/subscription` | SSRF-protected remote subscription fetching |

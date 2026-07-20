@@ -51,7 +51,8 @@ func parseVMess(link string) (model.ProxySpec, error) {
 	applyV2Ray(outbound, q)
 	name := stringValue(source["ps"])
 	if name == "" {
-		name = "vmess-" + server
+		// ps 为空时不能用真实服务器地址生成持久化名称。
+		name = "vmess-node"
 	}
 	return makeSpec(name, "vmess", server, uint16(port64), outbound)
 }

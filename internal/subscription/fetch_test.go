@@ -1,10 +1,19 @@
 package subscription
 
 import (
+	"errors"
+	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
 
 // TestValidateURLBlocksUnsafeDestinations 覆盖非 HTTP 协议、IPv4/IPv6 回环和 URL
 // userinfo，并以公网 HTTPS URL 确认静态规则不过度拒绝正常输入。
@@ -29,10 +38,28 @@ func TestValidateURLBlocksUnsafeDestinations(t *testing.T) {
 // TestPublicAddress 验证 SSRF 地址分类的核心边界：RFC1918 私网和 IPv4 链路本地必须
 // 拒绝，明确公网地址必须允许，使地址策略不依赖 URL 解析实现。
 func TestPublicAddress(t *testing.T) {
-	if publicAddress(netip.MustParseAddr("10.0.0.1")) || publicAddress(netip.MustParseAddr("169.254.1.1")) {
+	if publicAddress(netip.MustParseAddr("10.0.0.1")) || publicAddress(netip.MustParseAddr("169.254.1.1")) ||
+		publicAddress(netip.MustParseAddr("100.64.0.1")) || publicAddress(netip.MustParseAddr("192.0.2.1")) ||
+		publicAddress(netip.MustParseAddr("2001:db8::1")) {
 		t.Fatal("private address accepted")
 	}
 	if !publicAddress(netip.MustParseAddr("1.1.1.1")) {
 		t.Fatal("public address rejected")
+	}
+}
+
+// TestFetchDoesNotReturnSubscriptionURL 确认 net/http 回显的完整请求 URL 不会越过
+// Fetcher 边界。订阅 Token 常放在 query 中，即使上层误记错误也不能泄露它。
+func TestFetchDoesNotReturnSubscriptionURL(t *testing.T) {
+	const secret = "subscription-token-secret"
+	fetcher := &Fetcher{client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial failed for " + request.URL.String())
+	})}}
+	_, err := fetcher.Fetch(t.Context(), "https://example.com/sub?token="+secret)
+	if err == nil {
+		t.Fatal("expected fetch error")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "example.com") {
+		t.Fatalf("fetch error exposed URL: %v", err)
 	}
 }

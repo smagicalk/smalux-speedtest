@@ -3,12 +3,16 @@ package clientapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/showwin/speedtest-go/speedtest"
+
+	"smalux-speedtest/internal/model"
 )
 
 // TestMinimalBoxDirectOutbound 验证 minimalBoxContext 注册的基础协议足以启动 sing-box，
@@ -73,5 +77,18 @@ func TestUsableLatencyAcceptsSuccessfulPing(t *testing.T) {
 	}
 	if usableLatency(nil) {
 		t.Fatal("nil server was considered usable")
+	}
+}
+
+// TestExecutionErrorsDoNotExposeCause 确认 sing-box 和网络库的原始错误只能影响固定
+// 类别，不能通过 SpeedResult.Error 流向 Server、数据库和导出文件。
+func TestExecutionErrorsDoNotExposeCause(t *testing.T) {
+	const secret = "vless://uuid:password@secret.example:443"
+	message := executionResultError(executionError(errProxyInitialization, errors.New(secret)))
+	if message != model.ResultErrorProxyInitialization || strings.Contains(message, secret) {
+		t.Fatalf("unsafe execution result error: %q", message)
+	}
+	if got := transferResultError(errors.New(secret), nil); got != model.ResultErrorDownload {
+		t.Fatalf("download error = %q", got)
 	}
 }

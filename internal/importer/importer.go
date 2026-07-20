@@ -41,8 +41,9 @@ func Parse(content string) model.ImportResult {
 		}
 		proxy, err := ParseLink(line)
 		if err != nil {
-			// Error.Input 只保存经过截断的诊断文本，不把完整长分享链接带入 API 结果。
-			result.Errors = append(result.Errors, model.ImportError{Line: index + 1, Input: redactInput(line), Error: err.Error()})
+			// API 只返回协议提示和固定错误类别。截断仍可能暴露短链接的完整密码，
+			// 因此不能把任何原始片段带出 importer。
+			result.Errors = append(result.Errors, model.ImportError{Line: index + 1, Input: redactInput(line), Error: safeImportError(err)})
 			continue
 		}
 		key := proxy.Protocol + "|" + proxy.Server + "|" + strconv.Itoa(int(proxy.Port)) + "|" + proxy.Name
@@ -71,14 +72,34 @@ func decodeSubscription(content string) (string, bool) {
 	return decoded, true
 }
 
-// redactInput 缩短导入错误中回显的长输入，降低完整凭据通过诊断信息扩散的风险。
-//
-// 这只是可用性导向的截断，并非密码学意义的完整脱敏：短链接会原样返回，长链接的
-// 首尾仍可能含敏感片段。因此调用方不应把 ImportError.Input 写入公开日志或返回给
-// 非管理员；真正持久化的测速结果必须使用独立生成的 MaskedAddress。
+// redactInput 只保留格式合法且长度受限的 URI scheme。
+// 分享链接的 userinfo、authority、query、fragment 和 Base64 载荷均可能包含凭据，因此
+// 无论原文长短都不能回显。无法可靠识别 scheme 时只返回统一占位符。
 func redactInput(value string) string {
-	if len(value) <= 32 {
-		return value
+	separator := strings.Index(value, "://")
+	if separator < 1 || separator > 20 {
+		return "[redacted]"
 	}
-	return value[:16] + "..." + value[len(value)-8:]
+	scheme := strings.ToLower(value[:separator])
+	for _, current := range scheme {
+		if (current < 'a' || current > 'z') && (current < '0' || current > '9') && current != '+' && current != '-' && current != '.' {
+			return "[redacted]"
+		}
+	}
+	return scheme + "://[redacted]"
+}
+
+// safeImportError 将解析器和标准库错误折叠成不含输入内容的类别。
+// net/url 和 JSON/Base64 解析错误在部分情况下会引用原始字符串或其片段，不能直接
+// 放入 HTTP/Telegram 响应，更不能被上层日志记录。
+func safeImportError(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "unsupported protocol"), strings.Contains(message, "removed by sing-box"):
+		return "proxy protocol is not supported"
+	case strings.Contains(message, "server"), strings.Contains(message, "port"):
+		return "proxy address is invalid"
+	default:
+		return "proxy configuration is invalid"
+	}
 }

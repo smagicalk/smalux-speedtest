@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
 )
@@ -55,6 +56,15 @@ type runtimeTask struct {
 // AddTask 注册完整任务 Assignment、初始化所有目标为 queued，并立即尝试向在线目标派发。
 // 离线目标保留 queued，之后在 Client 完成 WebSocket 握手时由 dispatchQueued 补发。
 func (h *Hub) AddTask(assignment model.Assignment, clientIDs []string) {
+	// AddTask is also used by tests and future non-HTTP integrations, so do not
+	// assume importer.Parse was the only producer. Copy the slice before applying
+	// the shared name rule; the caller's assignment remains its own snapshot.
+	assignment.Proxies = append([]model.ProxySpec(nil), assignment.Proxies...)
+	for index := range assignment.Proxies {
+		proxy := &assignment.Proxies[index]
+		proxy.Protocol = model.NormalizeResultProtocol(proxy.Protocol)
+		proxy.Name = model.NormalizeProxyName(proxy.Protocol, proxy.Name, proxy.Server)
+	}
 	resultLimitPerProxy := assignment.TopN
 	if resultLimitPerProxy < 1 {
 		resultLimitPerProxy = 1
@@ -146,7 +156,7 @@ func (h *Hub) dispatch(taskID, clientID string) {
 			task.targets[clientID] = "queued"
 		}
 		h.mu.Unlock()
-		h.log.Warn("encode task assignment failed", "task_id", taskID, "client_id", clientID, "error", err)
+		h.log.Warn("encode task assignment failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -158,6 +168,6 @@ func (h *Hub) dispatch(taskID, clientID string) {
 			task.targets[clientID] = "queued"
 		}
 		h.mu.Unlock()
-		h.log.Warn("task dispatch failed", "task_id", taskID, "client_id", clientID, "error", err)
+		h.log.Warn("task dispatch failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
 	}
 }

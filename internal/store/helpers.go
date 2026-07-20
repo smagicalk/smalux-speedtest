@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"time"
+
+	"smalux-speedtest/internal/model"
 )
 
 // scanner 抽象 sql.Row 与 sql.Rows 共有的 Scan 方法，供单行和列表查询复用。
@@ -27,6 +29,13 @@ func scanClient(row scanner) (Client, error) {
 	}
 	client.Enabled = enabled != 0
 	_ = json.Unmarshal([]byte(labelsJSON), &client.Labels)
+	// Read-side normalization ensures management APIs and reports remain safe even if
+	// a legacy migration was interrupted or the database was modified out of band.
+	client.Name = model.NormalizeClientName(client.Name)
+	client.Labels = model.NormalizeClientLabels(client.Labels)
+	client.Version = normalizeClientVersion(client.Version)
+	client.OS = normalizeClientOS(client.OS)
+	client.Arch = normalizeClientArch(client.Arch)
 	return client, nil
 }
 

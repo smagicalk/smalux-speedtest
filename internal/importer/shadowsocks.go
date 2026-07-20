@@ -74,7 +74,9 @@ func parseShadowsocks(link string) (model.ProxySpec, error) {
 		}
 	}
 	if fragment == "" {
-		fragment = "ss-" + hostURL.Hostname()
+		// 结果会保存节点名称；无 fragment 时使用匿名默认值，避免真实 host 通过
+		// proxy_name 绕过 MaskedAddress 的脱敏策略。
+		fragment = "ss-node"
 	}
 	return makeSpec(fragment, "shadowsocks", hostURL.Hostname(), port, outbound)
 }

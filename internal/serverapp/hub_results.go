@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 )
 
@@ -35,7 +36,7 @@ func (h *Hub) saveResult(ctx context.Context, connected *peer, result model.Spee
 	err := h.store.SaveResult(writeCtx, validated)
 	cancel()
 	if err != nil {
-		h.log.Warn("persist task result failed", "task_id", result.TaskID, "client_id", result.ClientID, "error", err)
+		h.log.Warn("persist task result failed", "task_id", result.TaskID, "client_id", result.ClientID, "error_type", logsafe.ErrorType(err))
 		return
 	}
 	task.recordResultKey(result.ClientID, resultKey)
@@ -79,7 +80,7 @@ func (h *Hub) finishTargetLocked(ctx context.Context, taskID, clientID string, e
 	transition, err := h.store.FinishTarget(writeCtx, taskID, clientID, status, detail)
 	cancel()
 	if err != nil {
-		h.log.Warn("persist terminal target failed", "task_id", taskID, "client_id", clientID, "status", status, "error", err)
+		h.log.Warn("persist terminal target failed", "task_id", taskID, "client_id", clientID, "status", status, "error_type", logsafe.ErrorType(err))
 		return
 	}
 	removed := false
@@ -90,8 +91,8 @@ func (h *Hub) finishTargetLocked(ctx context.Context, taskID, clientID string, e
 			if task.expires != nil {
 				task.expires.Stop()
 			}
-			// 主动断开对敏感代理字段的引用，使其尽早具备垃圾回收条件。
-			task.assignment.Proxies = nil
+			// 覆盖 Outbound 字节并释放全部代理字段，不只等待垃圾回收。
+			model.EraseAssignment(&task.assignment)
 			delete(h.tasks, taskID)
 			removed = true
 		}

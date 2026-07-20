@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 )
 
 // CancelTask 原子地取消全部未终结目标和父任务。已取消任务按幂等成功处理；其他终态
@@ -22,8 +22,9 @@ func (s *Store) FailTask(ctx context.Context, taskID, detail string) error {
 // 再一次更新全部活动目标和父任务；任何一步失败都会回滚，读取者不会观察到半终结状态。
 func (s *Store) terminateTask(ctx context.Context, taskID, terminalStatus, detail string) error {
 	if terminalStatus != "canceled" && terminalStatus != "failed" {
-		return fmt.Errorf("invalid task terminal status %q", terminalStatus)
+		return errors.New("invalid task terminal status")
 	}
+	detail = normalizePersistedTaskDetail(detail)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

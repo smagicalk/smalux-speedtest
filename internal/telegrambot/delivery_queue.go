@@ -3,6 +3,8 @@ package telegrambot
 import (
 	"context"
 	"time"
+
+	"smalux-speedtest/internal/logsafe"
 )
 
 const textDeliveryTimeout = 8 * time.Second
@@ -79,7 +81,7 @@ func (b *Bot) sendText(ctx context.Context, chatID int64, text string) {
 			defer cancel()
 			err := b.sendTextWithRetry(deliveryCtx, chatID, message)
 			if err != nil && deliveryCtx.Err() == nil {
-				b.config.Logger.Warn("telegram sendMessage failed", "chat_id", chatID, "error", err)
+				b.config.Logger.Warn("telegram sendMessage failed", "chat_id", chatID, "error_type", logsafe.ErrorType(err))
 			}
 			return err
 		},

@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{.CSRF}}">
+  <meta name="current-admin-id" content="{{.CurrentAdminID}}">
   <title>Smalux Speedtest</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -15,6 +16,7 @@
     <div class="top-actions">
       <span id="sync-status" class="sync-status" aria-live="polite">等待同步</span>
       <button id="refresh" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
+      <span class="account-chip" title="当前管理员">{{.Username}}</span>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
     </div>
   </header>
@@ -38,6 +40,20 @@
         <table>
           <thead><tr><th>状态</th><th>名称</th><th>平台</th><th>版本</th><th>标签</th><th>最后在线</th><th></th></tr></thead>
           <tbody id="clients-body"><tr><td colspan="7" class="empty">正在加载</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 管理员账户与 Client 凭据分开管理；当前账户和最后一个启用账户受后端保护。 -->
+    <section class="section" id="admins-section">
+      <div class="section-heading">
+        <div><h2>管理员账户</h2><p>控制台登录与访问状态</p></div>
+        <button id="new-admin" class="primary" type="button">添加管理员</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>状态</th><th>用户名</th><th>最近登录</th><th>创建时间</th><th></th></tr></thead>
+          <tbody id="admins-body"><tr><td colspan="5" class="empty">正在加载</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -87,6 +103,17 @@
       <label class="field"><span>标签</span><input name="labels" placeholder="region=hk, provider=example"></label>
       <div id="client-error" class="alert error hidden" role="alert"></div>
       <div class="form-actions"><button class="quiet close-dialog" type="button">取消</button><button class="primary" type="submit">创建</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="admin-dialog">
+    <form id="admin-form" method="dialog">
+      <div class="dialog-heading"><h2>添加管理员</h2><button class="icon-button close-admin" type="button" title="关闭" aria-label="关闭">×</button></div>
+      <label class="field"><span>用户名</span><input name="username" autocomplete="off" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" required></label>
+      <label class="field"><span>密码</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
+      <label class="field"><span>确认密码</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
+      <div id="admin-error" class="alert error hidden" role="alert"></div>
+      <div class="form-actions"><button class="quiet close-admin" type="button">取消</button><button class="primary" type="submit">创建</button></div>
     </form>
   </dialog>
 

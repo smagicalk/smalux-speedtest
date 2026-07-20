@@ -17,6 +17,9 @@ func makeSpec(name, protocol, server string, port uint16, outbound map[string]an
 	if err != nil {
 		return model.ProxySpec{}, err
 	}
+	// URI fragments and VMess ps values are user-controlled labels. Normalize at the
+	// importer boundary so every protocol-specific parser gets identical privacy rules.
+	name = model.NormalizeProxyName(protocol, name, server)
 	return model.ProxySpec{ID: model.NewID(), Name: name, Protocol: protocol, Server: server, Port: port, Outbound: raw}, nil
 }
 

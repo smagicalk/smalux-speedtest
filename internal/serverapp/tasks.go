@@ -80,7 +80,7 @@ func (a *App) taskEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	channel, unsubscribe := a.hub.Subscribe(r.PathValue("id"))
 	// 无论浏览器正常关闭、网络断开还是服务端取消 Context，都必须注销订阅以免泄漏。

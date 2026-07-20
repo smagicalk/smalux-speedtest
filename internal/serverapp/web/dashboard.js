@@ -1,4 +1,5 @@
 import { $, copyText, escapeHTML, redirectToLogin, showToast, statusText } from './ui.js';
+import { initAdminUsers } from './admin-users.js';
 
 // CSRF 令牌由服务端模板注入。所有改变服务端状态的请求都必须携带该值，
 // 防止其他站点借用管理员浏览器中的会话发起跨站请求。
@@ -23,6 +24,7 @@ const api = async (url, options = {}) => {
 };
 
 const dateText = value => value ? new Date(value).toLocaleString() : '—';
+const adminUsers = initAdminUsers({api, dateText});
 
 function setSyncStatus(state, text) {
   const status = $('#sync-status');
@@ -134,7 +136,7 @@ async function refresh() {
   const button = $('#refresh');
   button.disabled = true;
   setSyncStatus('busy', '同步中');
-  refreshInFlight = Promise.all([loadClients(), loadTasks()]).then(() => {
+  refreshInFlight = Promise.all([loadClients(), loadTasks(), adminUsers.load()]).then(() => {
     setSyncStatus('success', `已更新 ${new Date().toLocaleTimeString()}`);
   }).catch(error => {
     setSyncStatus('error', '同步失败');

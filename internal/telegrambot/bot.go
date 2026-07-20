@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"smalux-speedtest/internal/logsafe"
 )
 
 const (
@@ -125,7 +127,7 @@ func (b *Bot) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			b.config.Logger.Warn("telegram getUpdates failed", "error", err)
+			b.config.Logger.Warn("telegram getUpdates failed", "error_type", logsafe.ErrorType(err))
 			if !waitContext(ctx, b.config.RetryDelay) {
 				break
 			}
@@ -143,7 +145,7 @@ func (b *Bot) Run(ctx context.Context) error {
 						persistFailed = true
 						break
 					}
-					b.config.Logger.Warn("persist telegram update offset failed", "offset", nextOffset, "error", err)
+					b.config.Logger.Warn("persist telegram update offset failed", "offset", nextOffset, "error_type", logsafe.ErrorType(err))
 					persistFailed = true
 					break
 				}

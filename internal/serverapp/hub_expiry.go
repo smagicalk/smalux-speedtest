@@ -3,6 +3,9 @@ package serverapp
 import (
 	"context"
 	"time"
+
+	"smalux-speedtest/internal/logsafe"
+	"smalux-speedtest/internal/model"
 )
 
 const expiredTaskDetail = "task expired after 10 minutes"
@@ -39,7 +42,7 @@ func (h *Hub) expireTask(taskID string) {
 
 	removed, err := h.persistExpiredTask(context.Background(), taskID, task)
 	if err != nil {
-		h.log.Warn("persist expired task failed", "task_id", taskID, "error", err)
+		h.log.Warn("persist expired task failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 		// Client 已经过了任务总期限，应立即尽力停止本地流量。数据库仍保持活动状态，
 		// 因而保留不可执行的 runtimeTask，并重设一次性 timer 稍后重试原子终结。
 		h.scheduleExpiryRetry(taskID, task)
@@ -72,7 +75,7 @@ func (h *Hub) persistExpiredTask(ctx context.Context, taskID string, task *runti
 		if task.expires != nil {
 			task.expires.Stop()
 		}
-		task.assignment.Proxies = nil
+		model.EraseAssignment(&task.assignment)
 		delete(h.tasks, taskID)
 		removed = true
 	}
@@ -103,7 +106,7 @@ func (h *Hub) flushPendingExpiry(ctx context.Context, taskID string) error {
 	removed, err := h.persistExpiredTask(ctx, taskID, task)
 	task.transition.Unlock()
 	if err != nil {
-		h.log.Warn("flush expired task failed", "task_id", taskID, "error", err)
+		h.log.Warn("flush expired task failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 		return err
 	}
 	if removed {
