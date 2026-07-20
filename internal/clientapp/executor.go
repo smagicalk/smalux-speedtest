@@ -114,7 +114,10 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 		pingCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		err := server.PingTestContext(pingCtx, nil)
 		cancel()
-		if err == nil && server.Latency > 0 && server.Latency < speedtest.PingTimeout {
+		// speedtest-go uses PingTimeout (-1) as a failure sentinel.  A
+		// successful latency is a positive duration; comparing it with the
+		// sentinel in the opposite direction would reject every healthy server.
+		if err == nil && usableLatency(server) {
 			available = append(available, server)
 		}
 	}
@@ -178,4 +181,12 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 		client.Manager.Reset()
 	}
 	return results, nil
+}
+
+// usableLatency reports whether speedtest-go recorded a real HTTP latency.
+// Keep the sentinel check explicit: PingTimeout is currently -1, but relying
+// only on a numeric comparison would make this rule fragile if the dependency
+// changes its failure representation.
+func usableLatency(server *speedtest.Server) bool {
+	return server != nil && server.Latency != speedtest.PingTimeout && server.Latency > 0
 }

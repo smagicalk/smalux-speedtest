@@ -8,6 +8,7 @@ import (
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/showwin/speedtest-go/speedtest"
 )
 
 // TestMinimalBoxDirectOutbound 验证 minimalBoxContext 注册的基础协议足以启动 sing-box，
@@ -45,5 +46,32 @@ func TestMinimalBoxDirectOutbound(t *testing.T) {
 	case <-accepted:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
+	}
+}
+
+// TestUsableLatencyAcceptsSuccessfulPing verifies the sentinel semantics used
+// by speedtest-go.  A positive duration must be retained while PingTimeout
+// and zero/negative values must be rejected before download/upload testing.
+func TestUsableLatencyAcceptsSuccessfulPing(t *testing.T) {
+	tests := []struct {
+		name    string
+		latency time.Duration
+		want    bool
+	}{
+		{name: "successful latency", latency: 83 * time.Millisecond, want: true},
+		{name: "speedtest timeout sentinel", latency: speedtest.PingTimeout, want: false},
+		{name: "zero latency", latency: 0, want: false},
+		{name: "negative latency", latency: -2 * time.Millisecond, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &speedtest.Server{Latency: test.latency}
+			if got := usableLatency(server); got != test.want {
+				t.Fatalf("usableLatency(%s) = %v, want %v", test.latency, got, test.want)
+			}
+		})
+	}
+	if usableLatency(nil) {
+		t.Fatal("nil server was considered usable")
 	}
 }
