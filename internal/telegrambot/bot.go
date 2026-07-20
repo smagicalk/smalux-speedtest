@@ -49,6 +49,15 @@ type Bot struct {
 	active map[int64]activeTaskState
 	// offsetStore 防止服务重启后重放已处理的提交更新。
 	offsetStore UpdateOffsetStore
+	// textSlots 限制待发送和发送中的反馈文本数量；文本回复不能阻塞 getUpdates 主循环，
+	// 但也不能在 Telegram 故障时无限积压内存。
+	textSlots chan struct{}
+	// deliveryMu 和 deliveryQueues 构成按 Chat ID 隔离的 FIFO 出站队列。
+	// 同一会话的文本和结果图片严格按入队顺序发送，不同会话由各自 worker 并行处理。
+	deliveryMu     sync.Mutex
+	deliveryQueues map[int64][]outboundDelivery
+	// deliveryWG 让 Run 退出前等待所有已经入队的文本和图片发送完成。
+	deliveryWG sync.WaitGroup
 }
 
 // New 创建 Bot，并要求四个外部端口全部显式提供。
@@ -88,9 +97,11 @@ func New(api API, authorization AuthorizationManager, runner Runner, renderer Re
 	}
 	return &Bot{
 		api: api, authorization: authorization, runner: runner, renderer: renderer, config: config,
-		slots:       make(chan struct{}, config.MaxConcurrentTasks),
-		active:      make(map[int64]activeTaskState),
-		offsetStore: config.UpdateOffsetStore,
+		slots:          make(chan struct{}, config.MaxConcurrentTasks),
+		active:         make(map[int64]activeTaskState),
+		offsetStore:    config.UpdateOffsetStore,
+		textSlots:      make(chan struct{}, 32),
+		deliveryQueues: make(map[int64][]outboundDelivery),
 	}, nil
 }
 
@@ -148,6 +159,9 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 	}
 	b.wg.Wait()
+	// 先等待任务 goroutine，确保不会再有结果图片或完成提示入队；再排空出站队列。
+	// 这个顺序也满足 sync.WaitGroup 的约束：Wait 开始后不会再并发 Add。
+	b.deliveryWG.Wait()
 	return ctx.Err()
 }
 
@@ -177,11 +191,4 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 		return
 	}
 	b.submitTask(ctx, message, principal, command, payload, isCommand)
-}
-
-// sendText 统一记录发送失败，业务处理无需因 Telegram 短暂故障改变任务状态。
-func (b *Bot) sendText(ctx context.Context, chatID int64, text string) {
-	if err := b.api.SendMessage(ctx, chatID, truncateRunes(text, 4096)); err != nil && ctx.Err() == nil {
-		b.config.Logger.Warn("telegram sendMessage failed", "chat_id", chatID, "error", err)
-	}
 }

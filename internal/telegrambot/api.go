@@ -22,7 +22,8 @@ type HTTPConfig struct {
 	Token string
 	// BaseURL 默认使用 Telegram 官方地址；自建远程服务必须使用 HTTPS，loopback 可用 HTTP。
 	BaseURL string
-	// Client 可注入定制 Transport。为 nil 时使用带 65 秒总超时的客户端。
+	// Client 可注入定制 Transport。为 nil 时使用带 65 秒总超时且禁止重定向的客户端。
+	// 注入 Client 时调用方应自行保证其 CheckRedirect 不会把 Token 转发到不可信主机。
 	Client *http.Client
 }
 
@@ -35,10 +36,12 @@ type HTTPAPI struct {
 
 // APIError 表示 Telegram 返回的非成功业务响应或 HTTP 状态。
 type APIError struct {
-	Method      string
-	StatusCode  int
-	ErrorCode   int
-	Description string
+	Method     string
+	StatusCode int
+	ErrorCode  int
+	// RetryAfterSeconds 是 Telegram 限流响应建议的等待秒数；没有该参数时为 0。
+	RetryAfterSeconds int
+	Description       string
 }
 
 // Error 返回不包含 Bot Token 的诊断文本。
@@ -72,9 +75,19 @@ func NewHTTPAPI(config HTTPConfig) (*HTTPAPI, error) {
 	client := config.Client
 	if client == nil {
 		// Telegram long polling 通常使用 25 秒 timeout；65 秒给连接建立和响应传输留出余量。
-		client = &http.Client{Timeout: 65 * time.Second}
+		// Bot Token 位于 URL 路径，Telegram API 不需要重定向，直接拒绝可避免跨主机泄露。
+		client = &http.Client{Timeout: 65 * time.Second, CheckRedirect: rejectTelegramRedirect}
+	} else if client.CheckRedirect == nil {
+		// 不修改调用方拥有的 Client，但为常见的“只注入 Transport”用法补上安全默认值。
+		clone := *client
+		clone.CheckRedirect = rejectTelegramRedirect
+		client = &clone
 	}
 	return &HTTPAPI{token: token, baseURL: baseURL, client: client}, nil
+}
+
+func rejectTelegramRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // isLoopbackTelegramHost 只为同机测试或本地 Bot API Server 放行明文 HTTP。

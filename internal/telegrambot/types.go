@@ -145,7 +145,8 @@ type Principal struct {
 }
 
 // TaskRequest 是 Telegram 消息解析后的任务创建请求。
-// Source 和 SubscriptionURL 互斥；Runner 适配器负责补充目标 Client、候选数、TopN 和线程数。
+// Source 和 SubscriptionURL 可以同时提供；Runner 适配器会合并两路来源，并负责补充
+// 目标 Client、候选数、TopN 和线程数。
 type TaskRequest struct {
 	Principal       Principal
 	Source          string

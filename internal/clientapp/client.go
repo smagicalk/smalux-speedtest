@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -45,11 +47,18 @@ type Client struct {
 	executor *Executor
 }
 
-// New 校验客户端必填配置并创建执行端。ServerURL、Token 和 Name 为空会立即失败，
-// 以免进入永远无法认证的重连循环。
+// New 校验客户端必填配置并创建执行端。必填值为空、URL 不是 ws/wss、缺少主机或
+// 内嵌凭据时会立即失败，以免进入永远无法认证的重连循环。
 func New(config Config) (*Client, error) {
+	config.ServerURL = strings.TrimSpace(config.ServerURL)
+	config.Token = strings.TrimSpace(config.Token)
+	config.Name = strings.TrimSpace(config.Name)
 	if config.ServerURL == "" || config.Token == "" || config.Name == "" {
 		return nil, errors.New("server URL, token and client name are required")
+	}
+	parsedURL, err := url.Parse(config.ServerURL)
+	if err != nil || (parsedURL.Scheme != "ws" && parsedURL.Scheme != "wss") || parsedURL.Host == "" || parsedURL.User != nil {
+		return nil, errors.New("server URL must be an absolute ws:// or wss:// URL without credentials")
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()

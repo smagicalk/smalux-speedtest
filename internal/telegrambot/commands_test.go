@@ -3,6 +3,7 @@ package telegrambot
 import (
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -29,8 +30,16 @@ func TestOwnerAuthorizationCommands(t *testing.T) {
 	if allowed, _ := authorization.IsAuthorized(t.Context(), 42); allowed {
 		t.Fatal("owner did not revoke user")
 	}
+	bot.deliveryWG.Wait()
 	messages, _, _ := api.snapshot()
 	if !containsMessage(messages, "仅 Bot 所有者") || !containsMessage(messages, "42 @worker (Speed Node)") || !containsMessage(messages, "已撤销用户 42") {
 		t.Fatalf("unexpected authorization replies: %+v", messages)
+	}
+}
+
+func TestSanitizeTelegramLabel(t *testing.T) {
+	value := sanitizeTelegramLabel("  first\nsecond\u202E"+strings.Repeat("x", 20), 12)
+	if value != "firstsecondx" || strings.ContainsAny(value, "\n\r") {
+		t.Fatalf("sanitized label = %q", value)
 	}
 }

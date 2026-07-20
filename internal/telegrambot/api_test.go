@@ -107,6 +107,23 @@ func TestHTTPAPIError(t *testing.T) {
 	}
 }
 
+// TestHTTPAPIBusinessErrorWithSuccessfulHTTPStatus 保留 Telegram 在 HTTP 200
+// 中返回 ok=false 的 error_code，供限流重试逻辑正确识别 429。
+func TestHTTPAPIBusinessErrorWithSuccessfulHTTPStatus(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return telegramResponse(http.StatusOK, `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":3}}`), nil
+	})}
+	api, err := NewHTTPAPI(HTTPConfig{Token: "token", Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = api.SendMessage(t.Context(), 1, "test")
+	var apiError *APIError
+	if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusOK || apiError.ErrorCode != 429 || apiError.RetryAfterSeconds != 3 {
+		t.Fatalf("unexpected business error: %#v", err)
+	}
+}
+
 // TestHTTPAPITransportErrorRedactsToken 防止 net/http 的 *url.Error 泄露 URL 内嵌的 Bot Token。
 func TestHTTPAPITransportErrorRedactsToken(t *testing.T) {
 	const token = "999999:top-secret-token"
@@ -153,6 +170,22 @@ func TestHTTPAPIPreservesCancellation(t *testing.T) {
 	err = api.SendMessage(t.Context(), 1, "test")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
+	}
+}
+
+// TestHTTPAPIDisablesRedirectsByDefault 防止 URL 路径中的 Bot Token 被默认重定向
+// 到其他主机；注入 Client 时使用副本，不修改调用方持有的对象。
+func TestHTTPAPIDisablesRedirectsByDefault(t *testing.T) {
+	client := &http.Client{}
+	api, err := NewHTTPAPI(HTTPConfig{Token: "token", Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.client == client || client.CheckRedirect != nil || api.client.CheckRedirect == nil {
+		t.Fatal("injected HTTP client was not safely cloned")
+	}
+	if err := api.client.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("redirect policy returned %v", err)
 	}
 }
 

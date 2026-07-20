@@ -13,18 +13,19 @@
   <!-- 任务页保留返回入口，不复制管理首页的 Client 和任务创建操作。 -->
   <header class="topbar">
     <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
-    <a class="quiet button-link" href="/">返回任务列表</a>
+    <div class="top-actions"><span id="task-sync-status" class="sync-status" aria-live="polite">正在连接</span><a class="quiet button-link" href="/">返回任务列表</a></div>
   </header>
   <main class="workspace">
     <!-- task.js 用模板注入的 TaskID 加载详情，并根据终态控制取消和导出按钮。 -->
     <section class="task-header">
       <div><span class="eyebrow">测速任务</span><h1 id="task-id">{{.TaskID}}</h1><div id="task-meta" class="meta-line"></div></div>
-      <div class="task-actions"><button id="export-image" class="quiet" type="button">导出图片</button><a class="quiet button-link" href="/api/tasks/{{.TaskID}}/results.csv">导出 CSV</a><button id="cancel-task" class="danger" type="button">取消任务</button></div>
+      <div class="task-actions"><button id="refresh-task" class="icon-button" type="button" title="刷新任务" aria-label="刷新任务">↻</button><button id="copy-task-id" class="quiet" type="button">复制 ID</button><button id="export-image" class="quiet" type="button">导出图片</button><a class="quiet button-link" href="/api/tasks/{{.TaskID}}/results.csv">导出 CSV</a><button id="cancel-task" class="danger" type="button">取消任务</button></div>
     </section>
     <!-- SSE progress 消息只更新这一信息带，不触发整个结果表重新请求。 -->
     <section class="progress-band">
       <div class="progress-copy"><strong id="progress-phase">等待 Client</strong><span id="progress-message">任务已进入队列</span></div>
       <div class="progress-track"><span id="progress-bar"></span></div>
+      <div class="progress-foot"><span id="progress-count">0 条结果</span><span id="progress-updated">尚未更新</span></div>
     </section>
     <!-- 初始结果来自详情 API，后续结果由 SSE 按数据库唯一键增量合并。 -->
     <section class="section">
@@ -37,6 +38,7 @@
       </div>
     </section>
   </main>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="/static/task.js"></script>
 </body>
 </html>

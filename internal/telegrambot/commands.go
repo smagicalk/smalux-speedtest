@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // handleAuthorizationCommand 执行 owner-only 授权名单管理；普通授权用户也无法调用。
@@ -34,17 +36,30 @@ func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, 
 		if len(users) == 0 {
 			output.WriteString("\n（空）")
 		}
+		shown := 0
 		for _, user := range users {
-			fmt.Fprintf(&output, "\n- %d", user.TelegramID)
-			if user.Username != "" {
-				fmt.Fprintf(&output, " @%s", user.Username)
+			var line strings.Builder
+			fmt.Fprintf(&line, "\n- %d", user.TelegramID)
+			username := sanitizeTelegramLabel(user.Username, 64)
+			displayName := sanitizeTelegramLabel(user.DisplayName, 96)
+			if username != "" {
+				fmt.Fprintf(&line, " @%s", username)
 			}
-			if user.DisplayName != "" {
-				fmt.Fprintf(&output, " (%s)", user.DisplayName)
+			if displayName != "" {
+				fmt.Fprintf(&line, " (%s)", displayName)
 			}
 			if user.Owner {
-				output.WriteString(" [owner]")
+				line.WriteString(" [owner]")
 			}
+			// 为“已授权用户”保留明确的截断提示，避免 sendText 的硬截断让
+			// owner 误以为名单完整。Telegram 单条文本上限为 4096，这里留出提示空间。
+			if utf8.RuneCountInString(output.String())+utf8.RuneCountInString(line.String()) > 3800 {
+				remaining := len(users) - shown
+				fmt.Fprintf(&output, "\n…还有 %d 位用户未显示。", remaining)
+				break
+			}
+			output.WriteString(line.String())
+			shown++
 		}
 		b.sendText(ctx, message.Chat.ID, output.String())
 		return
@@ -80,6 +95,18 @@ func (b *Bot) handleAuthorizationCommand(ctx context.Context, message *Message, 
 	}
 	b.config.Logger.Info("telegram user revoked", "owner_user_id", principal.UserID, "target_user_id", target.TelegramID)
 	b.sendText(ctx, message.Chat.ID, fmt.Sprintf("已撤销用户 %d。", target.TelegramID))
+}
+
+// sanitizeTelegramLabel 防止 Telegram 用户资料中的控制符、换行或超长文本伪造
+// /users 的名单结构；授权判断始终只依赖 TelegramID，不受展示字段影响。
+func sanitizeTelegramLabel(value string, limit int) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return -1
+		}
+		return r
+	}, value)
+	return truncateRunes(strings.TrimSpace(value), limit)
 }
 
 // handleCancel 仅允许已授权用户取消自己的当前任务。
@@ -144,7 +171,7 @@ func authorizationTarget(message *Message, payload string) (AuthorizedUser, erro
 	user := message.ReplyToMessage.From
 	return AuthorizedUser{
 		TelegramID:  user.ID,
-		Username:    user.Username,
-		DisplayName: strings.TrimSpace(strings.TrimSpace(user.FirstName) + " " + strings.TrimSpace(user.LastName)),
+		Username:    sanitizeTelegramLabel(user.Username, 64),
+		DisplayName: sanitizeTelegramLabel(strings.TrimSpace(strings.TrimSpace(user.FirstName)+" "+strings.TrimSpace(user.LastName)), 96),
 	}, nil
 }

@@ -31,13 +31,22 @@ func (a *HTTPAPI) execute(request *http.Request, method string, output any) erro
 		Result      json.RawMessage `json:"result"`
 		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
+		Parameters  struct {
+			RetryAfter int `json:"retry_after"`
+		} `json:"parameters"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<20))
 	if err := decoder.Decode(&envelope); err != nil {
 		return fmt.Errorf("decode telegram %s response: %w", method, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || !envelope.OK {
-		return &APIError{Method: method, StatusCode: response.StatusCode, ErrorCode: envelope.ErrorCode, Description: a.redact(envelope.Description)}
+		return &APIError{
+			Method:            method,
+			StatusCode:        response.StatusCode,
+			ErrorCode:         envelope.ErrorCode,
+			RetryAfterSeconds: maxPositive(envelope.Parameters.RetryAfter),
+			Description:       a.redact(envelope.Description),
+		}
 	}
 	if output != nil && len(envelope.Result) != 0 && string(envelope.Result) != "null" {
 		if err := json.Unmarshal(envelope.Result, output); err != nil {
@@ -45,6 +54,14 @@ func (a *HTTPAPI) execute(request *http.Request, method string, output any) erro
 		}
 	}
 	return nil
+}
+
+// maxPositive discards malformed negative retry hints before they reach retry arithmetic.
+func maxPositive(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 // methodURL 构造 Telegram 规定的 /bot<TOKEN>/<method> 地址。

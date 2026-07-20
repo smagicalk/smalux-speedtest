@@ -1,8 +1,9 @@
 // exportResultImage 在浏览器内生成 PNG，不把结果再次上传给服务端。
 // 报告使用固定 1800px 表格宽度保证列对齐，并限制为 72 行，避免超大任务生成超过
 // 浏览器 Canvas 尺寸或内存上限的图片；完整结果数仍会显示在页脚且可通过 CSV 导出。
+// 终态任务即使没有成功结果也可以导出诊断图，便于记录失败原因和任务参数。
 export function exportResultImage(taskData, results, taskID) {
-  if (!taskData || results.length === 0) return;
+  if (!taskData) return;
   // 名称相同时继续按稳定 ID 排序，保证不同代理/Client 不会交错成多个视觉分组。
   const allSorted = [...results].sort((a, b) =>
     String(a.proxy_name).localeCompare(String(b.proxy_name)) ||
@@ -94,7 +95,7 @@ export function exportResultImage(taskData, results, taskID) {
   groups.forEach((group, index) => {
     const y = titleHeight + headerHeight + group.start * rowHeight;
     const groupHeight = group.count * rowHeight;
-    const values = [String(index + 1), group.item.proxy_name, group.item.client_name || group.item.client_id.slice(0, 8), group.item.protocol.toUpperCase()];
+    const values = [String(index + 1), group.item.proxy_name, group.item.client_name || String(group.item.client_id || '').slice(0, 8), String(group.item.protocol || '').toUpperCase()];
     ctx.fillStyle = '#172126';
     ctx.font = '17px Arial, "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
     values.forEach((value, cell) => drawCanvasText(ctx, value, offsets[cell], y, columns[cell], groupHeight, cell === 1));

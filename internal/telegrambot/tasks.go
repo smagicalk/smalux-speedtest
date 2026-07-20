@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // submitTask 校验授权和并发限制，创建任务后异步等待结果。
@@ -110,7 +111,12 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 		image.Caption = fmt.Sprintf("Smalux Speedtest · 任务 %s · %s", taskID, status)
 	}
 	image.Caption = truncateRunes(image.Caption, 1024)
-	if err := b.sendPhotoWithRetry(ctx, chatID, image); err != nil && ctx.Err() == nil {
+	// 图片上传不应继承可能持续十分钟的测速 Context；独立窗口让 Telegram 卡顿时
+	// worker 和优雅关闭都有明确上限，同时不影响此前已完成的测速任务状态。
+	deliveryCtx, deliveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	err = b.sendPhotoOrdered(deliveryCtx, chatID, image)
+	deliveryCancel()
+	if err != nil && ctx.Err() == nil {
 		b.config.Logger.Warn("telegram sendPhoto failed", "task_id", taskID, "chat_id", chatID, "error", err)
 		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已完成，但结果图片发送失败。", taskID))
 	}
@@ -128,7 +134,7 @@ func (b *Bot) sendPhotoWithRetry(ctx context.Context, chatID int64, image Image)
 		if ctx.Err() != nil || !retryableTelegramDelivery(lastErr) || attempt == b.config.DeliveryAttempts {
 			return lastErr
 		}
-		if !waitContext(ctx, b.config.RetryDelay) {
+		if !waitContext(ctx, deliveryRetryDelay(lastErr, b.config.RetryDelay, 30*time.Second)) {
 			return ctx.Err()
 		}
 	}
@@ -137,8 +143,37 @@ func (b *Bot) sendPhotoWithRetry(ctx context.Context, chatID int64, image Image)
 
 func retryableTelegramDelivery(err error) bool {
 	var apiError *APIError
-	if !errors.As(err, &apiError) || apiError.StatusCode == 0 {
+	if !errors.As(err, &apiError) {
 		return true
 	}
-	return apiError.StatusCode == 429 || apiError.StatusCode >= 500
+	// Telegram 有时会用 HTTP 200 携带 ok=false；此时只能依赖 JSON error_code
+	// 判断限流或服务端故障，不能只看 HTTP 状态码。
+	if apiError.StatusCode == 429 || apiError.StatusCode >= 500 || apiError.ErrorCode == 429 || apiError.ErrorCode >= 500 {
+		return true
+	}
+	// 没有任何协议级状态时通常是自定义 Transport 包装的临时错误；保留一次
+	// 重试，但明确的 4xx/Telegram 4xx 业务错误不应重复发送。
+	return apiError.StatusCode == 0 && apiError.ErrorCode == 0
+}
+
+// deliveryRetryDelay 优先采用 Telegram 的 retry_after，但始终限制最大等待时间，
+// 避免恶意或异常网关返回极大整数让任务 goroutine 无限占用。
+func deliveryRetryDelay(err error, fallback, maximum time.Duration) time.Duration {
+	delay := fallback
+	var apiError *APIError
+	if errors.As(err, &apiError) && apiError.RetryAfterSeconds > 0 {
+		seconds := int64(apiError.RetryAfterSeconds)
+		if seconds <= int64((maximum / time.Second)) {
+			delay = time.Duration(seconds) * time.Second
+		} else {
+			delay = maximum
+		}
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	if maximum > 0 && delay > maximum {
+		delay = maximum
+	}
+	return delay
 }

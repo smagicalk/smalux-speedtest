@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -58,29 +59,49 @@ func (r telegramTaskRunner) Submit(ctx context.Context, request telegrambot.Task
 func (r telegramTaskRunner) Wait(ctx context.Context, taskID string) (telegrambot.Completion, error) {
 	events, unsubscribe := r.app.hub.Subscribe(taskID)
 	defer unsubscribe()
-	completion, done, err := r.readCompletion(ctx, taskID)
-	if err != nil || done {
-		return completion, err
-	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
+		completion, done, err := r.readCompletion(ctx, taskID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return telegrambot.Completion{}, ctx.Err()
+			}
+			// SQLite 或短暂连接故障不代表测速任务失败。继续复核，避免 Bot 提前
+			// 清除 active 状态并给用户一个永远不会到达的失败图片。
+			r.app.config.Logger.Warn("telegram task status read failed; retrying", "task_id", taskID, "error_type", fmt.Sprintf("%T", err))
+			if !waitTelegramRetry(ctx, 2*time.Second) {
+				return telegrambot.Completion{}, ctx.Err()
+			}
+			continue
+		}
+		if done {
+			return completion, nil
+		}
 		select {
 		case event := <-events:
 			if event.Type == "status" && isTerminalTaskStatus(event.Status) {
-				completion, done, err := r.readCompletion(ctx, taskID)
-				if err != nil || done {
-					return completion, err
-				}
+				// 下一轮立即读取权威快照；若此刻 SQLite 暂时不可用，会走上面的
+				// 有界退避，而不是把事件误判为任务失败。
+				continue
 			}
 		case <-ticker.C:
-			completion, done, err := r.readCompletion(ctx, taskID)
-			if err != nil || done {
-				return completion, err
-			}
+			// 定时复核覆盖事件丢失、服务重启和非 Hub 状态更新。
 		case <-ctx.Done():
 			return telegrambot.Completion{}, ctx.Err()
 		}
+	}
+}
+
+// waitTelegramRetry 在数据库短暂不可用时等待下一次状态复核，同时尊重 Bot 关闭信号。
+func waitTelegramRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

@@ -13,7 +13,8 @@
   <header class="topbar">
     <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
     <div class="top-actions">
-      <button id="refresh" class="icon-button" type="button" title="刷新" aria-label="刷新">↻</button>
+      <span id="sync-status" class="sync-status" aria-live="polite">等待同步</span>
+      <button id="refresh" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
     </div>
   </header>
@@ -43,16 +44,24 @@
 
     <!-- 代理正文不会持久化；创建成功后仅通过 WebSocket 下发给选中的 Client。 -->
     <section class="section task-builder">
-      <div class="section-heading"><div><h2>新建测速任务</h2><p>一次性代理配置不会写入数据库</p></div></div>
+      <div class="section-heading"><div><h2>新建测速任务</h2><p>一次性代理配置不会写入数据库</p></div><span id="task-form-state" class="sync-status">可提交</span></div>
       <form id="task-form">
         <div class="form-grid">
-          <label class="field wide"><span>分享链接 / Base64 订阅内容</span><textarea name="source" rows="7" spellcheck="false" placeholder="ss://…&#10;vless://…"></textarea></label>
-          <label class="field wide"><span>订阅 URL</span><input name="subscription_url" type="url" placeholder="https://example.com/subscription"></label>
+          <div class="field wide">
+            <div class="field-label"><label for="source-input">分享链接 / Base64 订阅内容</label><span id="source-count" class="field-meta">0 字符</span></div>
+            <textarea id="source-input" name="source" rows="7" spellcheck="false" autocomplete="off" placeholder="ss://…&#10;vless://…"></textarea>
+            <div class="field-tools"><span class="input-hint">支持单条、批量和 Base64；每行一条，也可与订阅 URL 合并。</span><button id="paste-source" class="quiet compact" type="button">粘贴</button><button id="clear-source" class="quiet compact" type="button">清空</button></div>
+          </div>
+          <label class="field wide"><span>订阅 URL</span><input name="subscription_url" type="url" autocomplete="url" placeholder="https://example.com/subscription"><small class="input-hint">服务端会执行 SSRF 防护并限制响应大小。</small></label>
           <label class="field"><span>候选测速节点</span><input name="candidate_count" type="number" value="10" min="1" max="50" required></label>
           <label class="field"><span>执行上下行节点</span><select name="top_n"><option value="1">Top 1</option><option value="2">Top 2</option><option value="3" selected>Top 3</option></select></label>
           <label class="field"><span>测速线程数</span><input name="threads" type="number" value="4" min="1" max="32" required></label>
         </div>
-        <fieldset><legend>目标 Client</legend><div id="client-options" class="check-grid"><span class="muted">暂无 Client</span></div></fieldset>
+        <fieldset>
+          <div class="field-label selection-heading"><legend>目标 Client</legend><span id="selected-client-count" class="field-meta">0 个已选择</span></div>
+          <div class="selection-toolbar"><span class="input-hint">离线 Client 可先排队，重连后会自动接收任务。</span><div class="selection-actions"><button id="select-online" class="quiet compact" type="button">选在线</button><button id="select-all" class="quiet compact" type="button">全选可用</button><button id="clear-selection" class="quiet compact" type="button">清空</button></div></div>
+          <div id="client-options" class="check-grid"><span class="muted">暂无 Client</span></div>
+        </fieldset>
         <div id="task-error" class="alert error hidden"></div>
         <div class="form-actions"><button class="primary" type="submit">创建任务</button></div>
       </form>
@@ -60,7 +69,7 @@
 
     <!-- 历史表仅展示摘要，详细结果与导出功能位于独立任务页。 -->
     <section class="section">
-      <div class="section-heading"><div><h2>任务历史</h2><p>最近 100 条任务</p></div></div>
+      <div class="section-heading"><div><h2>任务历史</h2><p>最近 100 条任务</p></div><div class="table-tools"><label class="filter-field"><span>状态</span><select id="task-filter"><option value="all">全部</option><option value="active">进行中</option><option value="completed">完成</option><option value="partial">部分完成</option><option value="failed">失败</option><option value="canceled">已取消</option></select></label><label class="filter-field"><span class="sr-only">搜索任务</span><input id="task-search" type="search" placeholder="搜索任务 ID"></label></div></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>创建时间</th><th>状态</th><th>代理数</th><th>Client</th><th>测速节点</th><th>线程</th><th></th></tr></thead>
@@ -76,6 +85,7 @@
       <div class="dialog-heading"><h2>添加 Client</h2><button class="icon-button close-dialog" type="button" title="关闭" aria-label="关闭">×</button></div>
       <label class="field"><span>名称</span><input name="name" required maxlength="80"></label>
       <label class="field"><span>标签</span><input name="labels" placeholder="region=hk, provider=example"></label>
+      <div id="client-error" class="alert error hidden" role="alert"></div>
       <div class="form-actions"><button class="quiet close-dialog" type="button">取消</button><button class="primary" type="submit">创建</button></div>
     </form>
   </dialog>
@@ -85,7 +95,8 @@
     <label class="field"><span>Token</span><textarea id="client-token" rows="3" readonly></textarea></label>
     <div class="form-actions"><button id="copy-token" class="primary" type="button">复制 Token</button></div>
   </dialog>
-  <script src="/static/dashboard.js" defer></script>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/static/dashboard.js"></script>
 </body>
 </html>
 {{end}}
