@@ -14,9 +14,9 @@ import (
 
 const (
 	// StartText 是 /start 的简短欢迎消息。
-	StartText = "Smalux Speedtest Bot\n测速前需要 owner 授权。使用 /id 获取授权所需 ID。\n授权后可直接发送代理，或使用 /sub <URL> 提交订阅。使用 /help 查看完整用法。"
+	StartText = "Smalux Speedtest Bot\n测速前需要 owner 授权。使用 /id 获取授权所需 ID。\n授权后点击下方按钮，按步骤选择候选节点、Top N 和线程数。"
 	// HelpText 说明文本解析规则，尤其说明 HTTP 代理与订阅 URL 的歧义处理方式。
-	HelpText = "测速用法：\n1. 直接发送代理链接或多行代理列表，所有普通文本均按代理源处理。\n2. 使用 /test <代理文本> 明确提交代理。\n3. 只有 /sub <HTTP(S) URL> 会按订阅地址处理。\n4. /cancel 取消自己当前的任务，/id 查看 Telegram ID。\nOwner 命令：/authorize <user_id>、/revoke <user_id>、/users；授权和撤销也支持回复目标消息。\n任务完成后 Bot 会返回结果图片。"
+	HelpText = "测速用法：\n1. 点击“代理测速”或“订阅测速”，按按钮逐步选择参数并确认。\n2. 也可以直接发送代理文本，或使用 /test <代理文本>、/sub <HTTP(S) URL> 快速提交（使用默认参数）。\n3. Bot 会编辑同一条引用消息展示阶段和进度，完成后回复结果图片。\n4. /cancel 取消配置或当前任务，/id 查看 Telegram ID。\nOwner 命令：/authorize <user_id>、/revoke <user_id>、/users；授权和撤销也支持回复目标消息。"
 )
 
 // Config 控制 Bot 的轮询、重试和并发行为。
@@ -60,6 +60,9 @@ type Bot struct {
 	deliveryQueues map[int64][]outboundDelivery
 	// deliveryWG 让 Run 退出前等待所有已经入队的文本和图片发送完成。
 	deliveryWG sync.WaitGroup
+	// wizards 只在内存中保存尚未确认的分步配置；代理正文不会进入数据库或日志。
+	wizardMu sync.Mutex
+	wizards  map[int64]*wizardState
 }
 
 // New 创建 Bot，并要求四个外部端口全部显式提供。
@@ -104,6 +107,7 @@ func New(api API, authorization AuthorizationManager, runner Runner, renderer Re
 		offsetStore:    config.UpdateOffsetStore,
 		textSlots:      make(chan struct{}, 32),
 		deliveryQueues: make(map[int64][]outboundDelivery),
+		wizards:        make(map[int64]*wizardState),
 	}, nil
 }
 
@@ -113,6 +117,9 @@ func New(api API, authorization AuthorizationManager, runner Runner, renderer Re
 // 重放。Telegram 临时错误会记录并重试，不会终止 Bot。退出前等待已启动的任务 goroutine；
 // Runner.Wait 和 Renderer.Render 必须遵守传入的 Context，否则优雅关闭也会被其阻塞。
 func (b *Bot) Run(ctx context.Context) error {
+	if err := b.api.SetMyCommands(ctx, botCommands()); err != nil && ctx.Err() == nil {
+		b.config.Logger.Warn("telegram setMyCommands failed", "error_type", logsafe.ErrorType(err))
+	}
 	offset := int64(0)
 	if b.offsetStore != nil {
 		var err error
@@ -169,6 +176,10 @@ func (b *Bot) Run(ctx context.Context) error {
 
 // handleUpdate 处理单条私聊文本消息。群组、频道和非文本更新只推进 offset，不回复。
 func (b *Bot) handleUpdate(ctx context.Context, update Update) {
+	if update.CallbackQuery != nil {
+		b.handleCallback(ctx, update.CallbackQuery)
+		return
+	}
 	message := update.Message
 	if message == nil || message.Chat.ID == 0 || message.Chat.Type != "private" || strings.TrimSpace(message.Text) == "" {
 		return
@@ -177,10 +188,10 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 	command, payload, isCommand := splitCommand(message.Text)
 	switch command {
 	case "start":
-		b.sendText(ctx, message.Chat.ID, StartText)
+		b.sendMainMenu(ctx, message.Chat.ID, StartText)
 		return
 	case "help":
-		b.sendText(ctx, message.Chat.ID, HelpText)
+		b.sendMainMenu(ctx, message.Chat.ID, HelpText)
 		return
 	case "id":
 		b.sendText(ctx, message.Chat.ID, fmt.Sprintf("User ID：%d\nChat ID：%d", principal.UserID, principal.ChatID))
@@ -189,7 +200,14 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 		b.handleAuthorizationCommand(ctx, message, principal, command, payload)
 		return
 	case "cancel":
+		if b.clearWizard(principal.UserID) {
+			b.sendMainMenu(ctx, message.Chat.ID, "已取消本次测速配置。")
+			return
+		}
 		b.handleCancel(ctx, message.Chat.ID, principal)
+		return
+	}
+	if b.handleWizardInput(ctx, message, principal, command, payload, isCommand) {
 		return
 	}
 	b.submitTask(ctx, message, principal, command, payload, isCommand)

@@ -81,4 +81,8 @@ func TestBotLongPollingAndTaskReplies(t *testing.T) {
 	if containsChat(messages, -100) || len(offsets) < 2 || offsets[0] != 0 || offsets[1] != 8 {
 		t.Fatalf("unexpected group reply or offsets: messages=%+v offsets=%v", messages, offsets)
 	}
+	commands := api.commandsSnapshot()
+	if len(commands) == 0 || commands[0].Command != "start" {
+		t.Fatalf("Telegram command menu was not registered: %+v", commands)
+	}
 }

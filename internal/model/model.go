@@ -68,6 +68,9 @@ type Assignment struct {
 type Progress struct {
 	// TaskID 标识进度所属任务。
 	TaskID string `json:"task_id"`
+	// ClientID/ClientName 由 Server 根据已认证连接补充，Client 上报值会被覆盖。
+	ClientID   string `json:"client_id,omitempty"`
+	ClientName string `json:"client_name,omitempty"`
 	// ProxyID 标识当前代理；尚未进入具体代理阶段时可为空。
 	ProxyID string `json:"proxy_id,omitempty"`
 	// ProxyName 是便于界面直接显示的代理名称。

@@ -17,18 +17,27 @@ func (b *Bot) submitTask(ctx context.Context, message *Message, principal Princi
 		b.sendText(ctx, message.Chat.ID, err.Error())
 		return
 	}
+	b.submitRequest(ctx, message, principal, TaskRequest{Principal: principal, Source: source, SubscriptionURL: subscriptionURL})
+}
+
+// submitRequest 接收分步向导或兼容命令已经解析好的请求，并统一执行授权与并发检查。
+func (b *Bot) submitRequest(ctx context.Context, message *Message, principal Principal, request TaskRequest) {
+	b.submitRequestWithStatus(ctx, message, principal, request, 0)
+}
+
+func (b *Bot) submitRequestWithStatus(ctx context.Context, message *Message, principal Principal, request TaskRequest, statusMessageID int64) {
 	if principal.UserID == 0 {
-		b.sendText(ctx, message.Chat.ID, "无法识别 Telegram 用户身份。")
+		b.replyOrEditStatus(ctx, message.Chat.ID, statusMessageID, "无法识别 Telegram 用户身份。")
 		return
 	}
 	allowed, err := b.authorization.IsAuthorized(ctx, principal.UserID)
 	if err != nil {
 		b.config.Logger.Warn("telegram authorization failed", "user_id", principal.UserID, "chat_id", principal.ChatID, "error_type", logsafe.ErrorType(err))
-		b.sendText(ctx, message.Chat.ID, "权限校验失败，请稍后重试。")
+		b.replyOrEditStatus(ctx, message.Chat.ID, statusMessageID, "权限校验失败，请稍后重试。")
 		return
 	}
 	if !allowed {
-		b.sendText(ctx, message.Chat.ID, "当前账号未获准提交测速任务。")
+		b.replyOrEditStatus(ctx, message.Chat.ID, statusMessageID, "当前账号未获准提交测速任务。")
 		return
 	}
 
@@ -38,22 +47,22 @@ func (b *Bot) submitTask(ctx context.Context, message *Message, principal Princi
 	case <-ctx.Done():
 		return
 	default:
-		b.sendText(ctx, message.Chat.ID, "当前并发任务已满，请稍后再试。")
+		b.replyOrEditStatus(ctx, message.Chat.ID, statusMessageID, "当前并发任务已满，请稍后再试。")
 		return
 	}
 	if !b.reserveActive(principal.UserID) {
 		<-b.slots
-		b.sendText(ctx, message.Chat.ID, "你已有一个进行中的测速任务，请等待完成或使用 /cancel。")
+		b.replyOrEditStatus(ctx, message.Chat.ID, statusMessageID, "你已有一个进行中的测速任务，请等待完成或使用 /cancel。")
 		return
 	}
-	request := TaskRequest{Principal: principal, Source: source, SubscriptionURL: subscriptionURL}
+	request.Principal = principal
 	b.wg.Add(1)
-	go b.submitAndReply(ctx, message.Chat.ID, principal.UserID, request)
+	go b.submitAndReply(ctx, message.Chat.ID, principal.UserID, message.MessageID, statusMessageID, request)
 }
 
 // submitAndReply 在已经取得全局槽位和用户占位后执行可能较慢的订阅抓取、任务创建、
 // 终态等待和图片发送。Run 可继续处理 /cancel 与 owner 权限命令。
-func (b *Bot) submitAndReply(ctx context.Context, chatID, userID int64, request TaskRequest) {
+func (b *Bot) submitAndReply(ctx context.Context, chatID, userID, replyToMessageID, statusMessageID int64, request TaskRequest) {
 	defer b.wg.Done()
 	defer func() { <-b.slots }()
 	activeTaskID := ""
@@ -68,24 +77,54 @@ func (b *Bot) submitAndReply(ctx context.Context, chatID, userID int64, request 
 		if userMessage == "" {
 			userMessage = "任务创建失败，请稍后重试或在管理页面查看日志。"
 		}
-		b.sendText(ctx, chatID, userMessage)
+		b.replyOrEditStatus(ctx, chatID, statusMessageID, userMessage)
 		return
 	}
 	activeTaskID = task.ID
 	b.setActiveTaskID(userID, task.ID)
-	// 确认消息只包含任务 ID，不回显可能含凭据的代理或订阅原文。
-	b.sendText(ctx, chatID, fmt.Sprintf("测速任务已创建：%s", task.ID))
-	b.waitAndReply(ctx, chatID, task.ID)
+	// 状态消息引用原始测速请求，只包含任务 ID 和脱敏进度，不回显代理或订阅原文。
+	if statusMessageID != 0 {
+		deliveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), textDeliveryTimeout)
+		_ = b.editMessageOrdered(deliveryCtx, EditMessageRequest{ChatID: chatID, MessageID: statusMessageID, Text: initialProgressText(task)})
+		cancel()
+	} else {
+		deliveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), textDeliveryTimeout)
+		sent, sendErr := b.sendMessageOrdered(deliveryCtx, MessageRequest{
+			ChatID: chatID, Text: initialProgressText(task), ReplyParameters: reply(replyToMessageID),
+		})
+		cancel()
+		statusMessageID = sent.MessageID
+		if sendErr != nil || sent.MessageID == 0 {
+			b.config.Logger.Warn("telegram progress message failed", "task_id", task.ID, "chat_id", chatID, "error_type", logsafe.ErrorType(sendErr))
+		}
+	}
+	b.waitAndReply(ctx, chatID, replyToMessageID, statusMessageID, task)
+}
+
+func (b *Bot) replyOrEditStatus(ctx context.Context, chatID, messageID int64, text string) {
+	if messageID != 0 {
+		_ = b.editMessageOrdered(ctx, EditMessageRequest{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: mainMenu()})
+		return
+	}
+	b.sendText(ctx, chatID, text)
 }
 
 // waitAndReply 等待任务终态；成功、部分成功和全部失败都渲染图片，
 // 主动取消等其他终态发送文本说明。
-func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
-	completion, err := b.runner.Wait(ctx, taskID)
+func (b *Bot) waitAndReply(ctx context.Context, chatID, replyToMessageID, progressMessageID int64, task Task) {
+	taskID := task.ID
+	editor := newProgressEditor(b, chatID, progressMessageID, task)
+	var completion Completion
+	var err error
+	if runner, ok := b.runner.(ProgressRunner); ok {
+		completion, err = runner.WaitWithProgress(ctx, taskID, editor.Update)
+	} else {
+		completion, err = b.runner.Wait(ctx, taskID)
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			b.config.Logger.Warn("telegram task wait failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
-			b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 执行失败，请在管理页面查看详情。", taskID))
+			editor.Finish(ctx, fmt.Sprintf("任务 %s 执行失败，请在管理页面查看详情。", taskID))
 		}
 		return
 	}
@@ -97,13 +136,13 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 		if status == "" {
 			status = "unknown"
 		}
-		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已结束，状态：%s。", taskID, status))
+		editor.Finish(ctx, fmt.Sprintf("任务 %s 已结束，状态：%s。", taskID, status))
 		return
 	}
 	image, err := b.renderer.Render(ctx, completion)
 	if err != nil || len(image.Data) == 0 {
 		b.config.Logger.Warn("telegram result rendering failed", "task_id", taskID, "error_type", logsafe.ErrorType(err))
-		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已完成，但结果图片生成失败。", taskID))
+		editor.Finish(ctx, fmt.Sprintf("任务 %s 已完成，但结果图片生成失败。", taskID))
 		return
 	}
 	if strings.TrimSpace(image.Filename) == "" {
@@ -113,6 +152,8 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 		image.Caption = fmt.Sprintf("Smalux Speedtest · 任务 %s · %s", taskID, status)
 	}
 	image.Caption = truncateRunes(image.Caption, 1024)
+	image.ReplyParameters = reply(replyToMessageID)
+	editor.Finish(ctx, fmt.Sprintf("任务 %s 测速完成，正在发送结果图片…", taskID))
 	// 图片上传不应继承可能持续十分钟的测速 Context；独立窗口让 Telegram 卡顿时
 	// worker 和优雅关闭都有明确上限，同时不影响此前已完成的测速任务状态。
 	deliveryCtx, deliveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -120,7 +161,13 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 	deliveryCancel()
 	if err != nil && ctx.Err() == nil {
 		b.config.Logger.Warn("telegram sendPhoto failed", "task_id", taskID, "chat_id", chatID, "error_type", logsafe.ErrorType(err))
-		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 已完成，但结果图片发送失败。", taskID))
+		editor.Finish(ctx, fmt.Sprintf("任务 %s 已完成，但结果图片发送失败。", taskID))
+	} else if err == nil {
+		deleteCtx, deleteCancel := context.WithTimeout(context.WithoutCancel(ctx), textDeliveryTimeout)
+		if deleteErr := b.deleteMessageOrdered(deleteCtx, chatID, progressMessageID); deleteErr != nil {
+			editor.Finish(ctx, fmt.Sprintf("任务 %s 已完成，结果图片已发送。", taskID))
+		}
+		deleteCancel()
 	}
 }
 
@@ -129,7 +176,10 @@ func (b *Bot) waitAndReply(ctx context.Context, chatID int64, taskID string) {
 func (b *Bot) sendPhotoWithRetry(ctx context.Context, chatID int64, image Image) error {
 	var lastErr error
 	for attempt := 1; attempt <= b.config.DeliveryAttempts; attempt++ {
-		lastErr = b.api.SendPhoto(ctx, chatID, image.Filename, image.Caption, image.Data)
+		lastErr = b.api.SendPhoto(ctx, PhotoRequest{
+			ChatID: chatID, Filename: image.Filename, Caption: image.Caption,
+			Data: image.Data, ReplyParameters: image.ReplyParameters,
+		})
 		if lastErr == nil {
 			return nil
 		}

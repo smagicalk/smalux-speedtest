@@ -108,6 +108,7 @@ func (h *Hub) setTargetRunning(ctx context.Context, taskID string, connected *pe
 	}
 	task.targets[clientID] = "running"
 	h.mu.Unlock()
+	h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: "running"})
 	h.publish(taskID, taskEvent{Type: "status", Status: "running"})
 }
 

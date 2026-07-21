@@ -33,21 +33,26 @@ func (a *orderedDeliveryAPI) GetUpdates(ctx context.Context, _ int64, _ time.Dur
 	return nil, ctx.Err()
 }
 
-func (a *orderedDeliveryAPI) SendMessage(ctx context.Context, chatID int64, text string) error {
-	if chatID == 1 && text == "created" {
+func (*orderedDeliveryAPI) SetMyCommands(context.Context, []BotCommand) error         { return nil }
+func (*orderedDeliveryAPI) EditMessageText(context.Context, EditMessageRequest) error { return nil }
+func (*orderedDeliveryAPI) AnswerCallbackQuery(context.Context, string, string) error { return nil }
+func (*orderedDeliveryAPI) DeleteMessage(context.Context, int64, int64) error         { return nil }
+
+func (a *orderedDeliveryAPI) SendMessage(ctx context.Context, request MessageRequest) (SentMessage, error) {
+	if request.ChatID == 1 && request.Text == "created" {
 		a.startOnce.Do(func() { close(a.blockedStarted) })
 		select {
 		case <-a.releaseBlocked:
 		case <-ctx.Done():
-			return ctx.Err()
+			return SentMessage{}, ctx.Err()
 		}
 	}
-	a.events <- fmt.Sprintf("text:%d:%s", chatID, text)
-	return nil
+	a.events <- fmt.Sprintf("text:%d:%s", request.ChatID, request.Text)
+	return SentMessage{MessageID: 1}, nil
 }
 
-func (a *orderedDeliveryAPI) SendPhoto(_ context.Context, chatID int64, filename, _ string, _ []byte) error {
-	a.events <- fmt.Sprintf("photo:%d:%s", chatID, filename)
+func (a *orderedDeliveryAPI) SendPhoto(_ context.Context, request PhotoRequest) error {
+	a.events <- fmt.Sprintf("photo:%d:%s", request.ChatID, request.Filename)
 	return nil
 }
 
@@ -62,9 +67,15 @@ func (a *scriptedPhotoAPI) GetUpdates(ctx context.Context, _ int64, _ time.Durat
 	return nil, ctx.Err()
 }
 
-func (*scriptedPhotoAPI) SendMessage(context.Context, int64, string) error { return nil }
+func (*scriptedPhotoAPI) SetMyCommands(context.Context, []BotCommand) error         { return nil }
+func (*scriptedPhotoAPI) EditMessageText(context.Context, EditMessageRequest) error { return nil }
+func (*scriptedPhotoAPI) AnswerCallbackQuery(context.Context, string, string) error { return nil }
+func (*scriptedPhotoAPI) DeleteMessage(context.Context, int64, int64) error         { return nil }
+func (*scriptedPhotoAPI) SendMessage(context.Context, MessageRequest) (SentMessage, error) {
+	return SentMessage{MessageID: 1}, nil
+}
 
-func (a *scriptedPhotoAPI) SendPhoto(context.Context, int64, string, string, []byte) error {
+func (a *scriptedPhotoAPI) SendPhoto(context.Context, PhotoRequest) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	index := a.attempts

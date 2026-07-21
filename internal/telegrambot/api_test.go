@@ -74,20 +74,62 @@ func TestHTTPAPI(t *testing.T) {
 	if len(updates) != 1 || updates[0].UpdateID != 42 || updates[0].Message == nil || updates[0].Message.Text != "/id" {
 		t.Fatalf("unexpected updates: %+v", updates)
 	}
-	if gotOffset != 40 || gotTimeout != 2 || len(gotAllowed) != 1 || gotAllowed[0] != "message" {
+	if gotOffset != 40 || gotTimeout != 2 || len(gotAllowed) != 2 || gotAllowed[0] != "message" || gotAllowed[1] != "callback_query" {
 		t.Fatalf("unexpected poll input: offset=%d timeout=%d allowed=%v", gotOffset, gotTimeout, gotAllowed)
 	}
-	if err := api.SendMessage(t.Context(), 88, "hello"); err != nil {
+	if _, err := api.SendMessage(t.Context(), MessageRequest{ChatID: 88, Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	if gotChatID != 88 || gotMessage != "hello" {
 		t.Fatalf("unexpected message: chat=%d text=%q", gotChatID, gotMessage)
 	}
-	if err := api.SendPhoto(t.Context(), 88, "result.png", "caption", []byte("PNG")); err != nil {
+	if err := api.SendPhoto(t.Context(), PhotoRequest{ChatID: 88, Filename: "result.png", Caption: "caption", Data: []byte("PNG")}); err != nil {
 		t.Fatal(err)
 	}
 	if gotFilename != "result.png" || gotCaption != "caption" || gotPhoto != "PNG" {
 		t.Fatalf("unexpected photo: filename=%q caption=%q data=%q", gotFilename, gotCaption, gotPhoto)
+	}
+}
+
+func TestHTTPAPIInteractiveMethods(t *testing.T) {
+	seen := make(map[string]json.RawMessage)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		body, _ := io.ReadAll(r.Body)
+		seen[method] = append([]byte(nil), body...)
+		result := `{}`
+		if method == "sendMessage" {
+			result = `{"message_id":77}`
+		}
+		return telegramResponse(http.StatusOK, `{"ok":true,"result":`+result+`}`), nil
+	})}
+	api, err := NewHTTPAPI(HTTPConfig{Token: "token", Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := api.SetMyCommands(t.Context(), []BotCommand{{Command: "start", Description: "menu"}}); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "choose", ReplyParameters: reply(9), ReplyMarkup: mainMenu()})
+	if err != nil || sent.MessageID != 77 {
+		t.Fatalf("sendMessage result=%+v err=%v", sent, err)
+	}
+	if err := api.EditMessageText(t.Context(), EditMessageRequest{ChatID: 1, MessageID: 77, Text: "progress"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.AnswerCallbackQuery(t.Context(), "callback-1", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.DeleteMessage(t.Context(), 1, 77); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"setMyCommands", "sendMessage", "editMessageText", "answerCallbackQuery", "deleteMessage"} {
+		if len(seen[method]) == 0 {
+			t.Fatalf("%s was not called", method)
+		}
+	}
+	if !strings.Contains(string(seen["sendMessage"]), `"reply_parameters":{"message_id":9`) || !strings.Contains(string(seen["sendMessage"]), `"inline_keyboard"`) {
+		t.Fatalf("interactive sendMessage fields missing: %s", seen["sendMessage"])
 	}
 }
 
@@ -100,7 +142,7 @@ func TestHTTPAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = api.SendMessage(t.Context(), 1, "test")
+	_, err = api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "test"})
 	var apiError *APIError
 	if !errors.As(err, &apiError) || apiError.ErrorCode != 401 || apiError.Method != "sendMessage" {
 		t.Fatalf("unexpected error: %#v", err)
@@ -117,7 +159,7 @@ func TestHTTPAPIBusinessErrorWithSuccessfulHTTPStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = api.SendMessage(t.Context(), 1, "test")
+	_, err = api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "test"})
 	var apiError *APIError
 	if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusOK || apiError.ErrorCode != 429 || apiError.RetryAfterSeconds != 3 {
 		t.Fatalf("unexpected business error: %#v", err)
@@ -134,7 +176,7 @@ func TestHTTPAPITransportErrorRedactsToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = api.SendMessage(t.Context(), 1, "test")
+	_, err = api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "test"})
 	if err == nil || strings.Contains(err.Error(), token) {
 		t.Fatalf("transport error leaked token: %v", err)
 	}
@@ -152,7 +194,7 @@ func TestHTTPAPIResponseErrorRedactsToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = api.SendMessage(t.Context(), 1, "test")
+	_, err = api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "test"})
 	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[redacted]") {
 		t.Fatalf("response error was not redacted: %v", err)
 	}
@@ -167,7 +209,7 @@ func TestHTTPAPIPreservesCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = api.SendMessage(t.Context(), 1, "test")
+	_, err = api.SendMessage(t.Context(), MessageRequest{ChatID: 1, Text: "test"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}

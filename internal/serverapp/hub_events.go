@@ -20,6 +20,9 @@ type taskEvent struct {
 	Status string `json:"status,omitempty"`
 	// Message 提供状态事件的可选补充说明。
 	Message string `json:"message,omitempty"`
+	// ClientID 和 TargetStatus 用于多 Client 任务的节点级进度，不接受 Client 载荷。
+	ClientID     string `json:"client_id,omitempty"`
+	TargetStatus string `json:"target_status,omitempty"`
 }
 
 // Subscribe 为指定任务注册一个容量为 32 的 SSE 事件队列，并返回幂等风格的注销函数。

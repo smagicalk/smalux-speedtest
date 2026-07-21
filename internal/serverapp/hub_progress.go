@@ -35,7 +35,8 @@ func (h *Hub) normalizeProgress(taskID string, connected *peer, input model.Prog
 	}
 
 	output := model.Progress{
-		TaskID: taskID, ProxyID: input.ProxyID, ProxyName: identity.name, Phase: input.Phase,
+		TaskID: taskID, ClientID: connected.client.ID, ClientName: connected.client.Name,
+		ProxyID: input.ProxyID, ProxyName: identity.name, Phase: input.Phase,
 	}
 	limit := 0
 	switch input.Phase {

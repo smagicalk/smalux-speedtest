@@ -27,7 +27,7 @@ type HTTPConfig struct {
 	Client *http.Client
 }
 
-// HTTPAPI 使用标准库实现 Telegram Bot API 的 getUpdates、sendMessage 和 sendPhoto。
+// HTTPAPI 使用标准库实现 Telegram Bot API 的轮询、菜单、按钮、消息编辑和图片发送。
 type HTTPAPI struct {
 	token   string
 	baseURL string
@@ -111,7 +111,7 @@ func (a *HTTPAPI) GetUpdates(ctx context.Context, offset int64, timeout time.Dur
 		Offset         int64    `json:"offset"`
 		Timeout        int64    `json:"timeout"`
 		AllowedUpdates []string `json:"allowed_updates"`
-	}{Offset: offset, Timeout: seconds, AllowedUpdates: []string{"message"}}
+	}{Offset: offset, Timeout: seconds, AllowedUpdates: []string{"message", "callback_query"}}
 	var updates []Update
 	if err := a.callJSON(ctx, "getUpdates", request, &updates); err != nil {
 		return nil, err
@@ -119,28 +119,61 @@ func (a *HTTPAPI) GetUpdates(ctx context.Context, offset int64, timeout time.Dur
 	return updates, nil
 }
 
+func (a *HTTPAPI) SetMyCommands(ctx context.Context, commands []BotCommand) error {
+	return a.callJSON(ctx, "setMyCommands", struct {
+		Commands []BotCommand `json:"commands"`
+	}{Commands: commands}, nil)
+}
+
 // SendMessage 通过 sendMessage 发送不启用 parse_mode 的纯文本。
-func (a *HTTPAPI) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (a *HTTPAPI) SendMessage(ctx context.Context, request MessageRequest) (SentMessage, error) {
+	var result SentMessage
+	err := a.callJSON(ctx, "sendMessage", request, &result)
+	return result, err
+}
+
+func (a *HTTPAPI) EditMessageText(ctx context.Context, request EditMessageRequest) error {
+	return a.callJSON(ctx, "editMessageText", request, nil)
+}
+
+func (a *HTTPAPI) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string) error {
 	request := struct {
-		ChatID int64  `json:"chat_id"`
-		Text   string `json:"text"`
-	}{ChatID: chatID, Text: text}
-	return a.callJSON(ctx, "sendMessage", request, nil)
+		CallbackQueryID string `json:"callback_query_id"`
+		Text            string `json:"text,omitempty"`
+	}{CallbackQueryID: callbackQueryID, Text: truncateRunes(text, 200)}
+	return a.callJSON(ctx, "answerCallbackQuery", request, nil)
+}
+
+func (a *HTTPAPI) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	request := struct {
+		ChatID    int64 `json:"chat_id"`
+		MessageID int64 `json:"message_id"`
+	}{ChatID: chatID, MessageID: messageID}
+	return a.callJSON(ctx, "deleteMessage", request, nil)
 }
 
 // SendPhoto 使用 multipart/form-data 上传内存图片。
-func (a *HTTPAPI) SendPhoto(ctx context.Context, chatID int64, filename, caption string, data []byte) error {
-	if len(data) == 0 {
+func (a *HTTPAPI) SendPhoto(ctx context.Context, request PhotoRequest) error {
+	if len(request.Data) == 0 {
 		return errors.New("telegram photo data is empty")
 	}
-	filename = safeFilename(filename)
+	filename := safeFilename(request.Filename)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("chat_id", fmt.Sprintf("%d", chatID)); err != nil {
+	if err := writer.WriteField("chat_id", fmt.Sprintf("%d", request.ChatID)); err != nil {
 		return err
 	}
-	if caption != "" {
-		if err := writer.WriteField("caption", caption); err != nil {
+	if request.Caption != "" {
+		if err := writer.WriteField("caption", request.Caption); err != nil {
+			return err
+		}
+	}
+	if request.ReplyParameters != nil {
+		value, err := json.Marshal(request.ReplyParameters)
+		if err != nil {
+			return err
+		}
+		if err := writer.WriteField("reply_parameters", string(value)); err != nil {
 			return err
 		}
 	}
@@ -148,18 +181,18 @@ func (a *HTTPAPI) SendPhoto(ctx context.Context, chatID int64, filename, caption
 	if err != nil {
 		return err
 	}
-	if _, err := part.Write(data); err != nil {
+	if _, err := part.Write(request.Data); err != nil {
 		return err
 	}
 	if err := writer.Close(); err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.methodURL("sendPhoto"), &body)
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, a.methodURL("sendPhoto"), &body)
 	if err != nil {
 		return fmt.Errorf("create telegram sendPhoto request: %s", a.redact(err.Error()))
 	}
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	return a.execute(request, "sendPhoto", nil)
+	httpRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	return a.execute(httpRequest, "sendPhoto", nil)
 }
 
 // callJSON 编码一个 JSON 请求并解码 Telegram 的统一响应信封。

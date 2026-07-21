@@ -64,24 +64,29 @@ func (b *Bot) drainDeliveryQueue(chatID int64) {
 // textSlots 全局限制最多 32 条待发送或发送中的文本，防止 API 故障期间消息洪峰无限占用
 // 内存；结果图片不占文本槽位，测速完成通知不会被普通命令回复挤掉。
 func (b *Bot) sendText(ctx context.Context, chatID int64, text string) {
+	b.sendTextRequest(ctx, MessageRequest{ChatID: chatID, Text: text})
+}
+
+// sendTextRequest 异步发送普通提示或带按钮的菜单。
+func (b *Bot) sendTextRequest(ctx context.Context, request MessageRequest) {
 	select {
 	case b.textSlots <- struct{}{}:
 	default:
-		b.config.Logger.Warn("telegram text delivery queue full", "chat_id", chatID)
+		b.config.Logger.Warn("telegram text delivery queue full", "chat_id", request.ChatID)
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	baseContext := context.WithoutCancel(ctx)
-	message := truncateRunes(text, 4096)
-	b.enqueueDelivery(chatID, outboundDelivery{
+	request.Text = truncateRunes(request.Text, 4096)
+	b.enqueueDelivery(request.ChatID, outboundDelivery{
 		send: func() error {
 			deliveryCtx, cancel := context.WithTimeout(baseContext, textDeliveryTimeout)
 			defer cancel()
-			err := b.sendTextWithRetry(deliveryCtx, chatID, message)
+			_, err := b.sendTextWithRetry(deliveryCtx, request)
 			if err != nil && deliveryCtx.Err() == nil {
-				b.config.Logger.Warn("telegram sendMessage failed", "chat_id", chatID, "error_type", logsafe.ErrorType(err))
+				b.config.Logger.Warn("telegram sendMessage failed", "chat_id", request.ChatID, "error_type", logsafe.ErrorType(err))
 			}
 			return err
 		},
@@ -91,21 +96,84 @@ func (b *Bot) sendText(ctx context.Context, chatID int64, text string) {
 
 // sendTextWithRetry 对短文本做一次有界重试。长的 RetryDelay 会压低为 2 秒，避免
 // 高频交互反馈因为一条临时失败占住同一会话队列过久。
-func (b *Bot) sendTextWithRetry(ctx context.Context, chatID int64, message string) error {
+func (b *Bot) sendTextWithRetry(ctx context.Context, request MessageRequest) (SentMessage, error) {
+	var sent SentMessage
 	var err error
 	for attempt := 1; attempt <= 2; attempt++ {
-		err = b.api.SendMessage(ctx, chatID, message)
+		sent, err = b.api.SendMessage(ctx, request)
 		if err == nil || ctx.Err() != nil || !retryableTelegramDelivery(err) || attempt == 2 {
-			return err
+			return sent, err
 		}
 		// 文本反馈要保持交互响应；即使 Telegram 给出更长 retry_after，也只
 		// 在短窗口内再次尝试，避免同一会话队列被单条提示长时间占住。
 		wait := deliveryRetryDelay(err, b.config.RetryDelay, 2*time.Second)
 		if !waitContext(ctx, wait) {
-			return ctx.Err()
+			return SentMessage{}, ctx.Err()
 		}
 	}
-	return err
+	return sent, err
+}
+
+// sendMessageOrdered 等待消息实际发送完成并返回其 ID，供任务进度后续原地编辑。
+func (b *Bot) sendMessageOrdered(ctx context.Context, request MessageRequest) (SentMessage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request.Text = truncateRunes(request.Text, 4096)
+	done := make(chan error, 1)
+	var sent SentMessage
+	b.enqueueDelivery(request.ChatID, outboundDelivery{
+		send: func() error {
+			var err error
+			sent, err = b.sendTextWithRetry(ctx, request)
+			return err
+		},
+		done: done,
+	})
+	select {
+	case err := <-done:
+		return sent, err
+	case <-ctx.Done():
+		return SentMessage{}, ctx.Err()
+	}
+}
+
+func (b *Bot) editMessageOrdered(ctx context.Context, request EditMessageRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request.Text = truncateRunes(request.Text, 4096)
+	done := make(chan error, 1)
+	b.enqueueDelivery(request.ChatID, outboundDelivery{
+		send: func() error { return b.api.EditMessageText(ctx, request) },
+		done: done,
+	})
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *Bot) deleteMessageOrdered(ctx context.Context, chatID, messageID int64) error {
+	if messageID == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan error, 1)
+	b.enqueueDelivery(chatID, outboundDelivery{
+		send: func() error { return b.api.DeleteMessage(ctx, chatID, messageID) },
+		done: done,
+	})
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // sendPhotoOrdered 把结果图片放入和文本相同的会话队列，并把最终发送结果返回给任务

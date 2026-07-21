@@ -30,12 +30,12 @@ func TestSingleActiveTaskAndCancel(t *testing.T) {
 	bot.handleUpdate(t.Context(), privateUpdate(3, 1, "/cancel"))
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		messages, _, _ := api.snapshot()
-		if containsMessage(messages, "状态：canceled") {
+		edits := api.editsSnapshot()
+		if containsEdit(edits, "状态：canceled") {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cancel completion was not reported: %+v", messages)
+			t.Fatalf("cancel completion was not reported: %+v", edits)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -47,6 +47,15 @@ func TestSingleActiveTaskAndCancel(t *testing.T) {
 		t.Fatalf("missing active/cancel replies: %+v", messages)
 	}
 	bot.wg.Wait()
+}
+
+func containsEdit(edits []EditMessageRequest, fragment string) bool {
+	for _, edit := range edits {
+		if strings.Contains(edit.Text, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSubmissionErrorVisibility 只回传显式 UserError，内部错误保持通用文案。

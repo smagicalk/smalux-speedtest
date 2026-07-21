@@ -38,7 +38,7 @@ func TestTelegramTaskSubmitWithoutOnlineClient(t *testing.T) {
 }
 
 // TestTelegramTaskSubmitSelectsEnabledOnlineClients 同时构造在线/离线、启用/撤销组合，
-// 确认 Bot 只把 enabled+online 的交集交给共用任务服务，并成功创建可取消的任务。
+// 确认 Bot 只把用户选中的 enabled+online Client 交给共用任务服务。
 func TestTelegramTaskSubmitSelectsEnabledOnlineClients(t *testing.T) {
 	application := newTaskServiceTestApp(t)
 	onlineA, _, err := application.store.CreateClient(t.Context(), "a-online", nil)
@@ -69,7 +69,10 @@ func TestTelegramTaskSubmitSelectsEnabledOnlineClients(t *testing.T) {
 	application.hub.peers[onlineD.ID] = nil
 	application.hub.mu.Unlock()
 	runner := telegramTaskRunner{app: application}
-	created, err := runner.Submit(t.Context(), telegrambot.TaskRequest{Source: "socks5://example.com:1080#node"})
+	created, err := runner.Submit(t.Context(), telegrambot.TaskRequest{
+		Source: "socks5://example.com:1080#node", CandidateCount: 20, TopN: 2, Threads: 8,
+		ClientIDs: []string{onlineD.ID},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +90,7 @@ func TestTelegramTaskSubmitSelectsEnabledOnlineClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ClientCount != 2 || stored.Status != "queued" || stored.CandidateCount != 10 || stored.TopN != 3 || stored.Threads != 4 {
+	if stored.ClientCount != 1 || stored.Status != "queued" || stored.CandidateCount != 20 || stored.TopN != 2 || stored.Threads != 8 {
 		t.Fatalf("unexpected stored Telegram task: %+v", stored)
 	}
 	application.hub.mu.RLock()
@@ -102,7 +105,7 @@ func TestTelegramTaskSubmitSelectsEnabledOnlineClients(t *testing.T) {
 	_, hasOnlineD := runtime.targets[onlineD.ID]
 	targetCount := len(runtime.targets)
 	application.hub.mu.RUnlock()
-	if targetCount != 2 || !hasOnlineA || !hasOnlineD || hasOffline || hasRevoked {
+	if targetCount != 1 || hasOnlineA || !hasOnlineD || hasOffline || hasRevoked {
 		t.Fatalf("unexpected Telegram targets: count=%d onlineA=%v offline=%v revoked=%v onlineD=%v",
 			targetCount, hasOnlineA, hasOffline, hasRevoked, hasOnlineD)
 	}

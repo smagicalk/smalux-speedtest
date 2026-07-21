@@ -12,10 +12,66 @@ import (
 type API interface {
 	// GetUpdates 从 offset 开始长轮询消息更新。成功返回的 UpdateID 应由调用方推进 offset。
 	GetUpdates(ctx context.Context, offset int64, timeout time.Duration) ([]Update, error)
-	// SendMessage 向指定会话发送纯文本消息。本包不启用 HTML/Markdown 解析模式。
-	SendMessage(ctx context.Context, chatID int64, text string) error
-	// SendPhoto 向指定会话上传内存图片；filename 仅作为 Telegram 文件名元数据。
-	SendPhoto(ctx context.Context, chatID int64, filename, caption string, data []byte) error
+	// SetMyCommands 注册 Telegram 输入框菜单中的命令提示。
+	SetMyCommands(ctx context.Context, commands []BotCommand) error
+	// SendMessage 发送文本并返回 Telegram 分配的消息 ID，供后续进度编辑使用。
+	SendMessage(ctx context.Context, request MessageRequest) (SentMessage, error)
+	// EditMessageText 原地更新 Bot 已发送的配置或进度消息。
+	EditMessageText(ctx context.Context, request EditMessageRequest) error
+	// AnswerCallbackQuery 及时结束客户端按钮的加载状态。
+	AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string) error
+	// DeleteMessage 删除已被最终结果图片替代的临时控制/进度消息。
+	DeleteMessage(ctx context.Context, chatID, messageID int64) error
+	// SendPhoto 向指定会话上传内存图片，并可引用原始测速请求。
+	SendPhoto(ctx context.Context, request PhotoRequest) error
+}
+
+// BotCommand 是 Telegram 菜单中的一条 slash command。
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// InlineKeyboardMarkup 和 InlineKeyboardButton 描述消息下方的回调按钮。
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+// ReplyParameters 让 Bot 的状态和图片明确引用触发测速的用户消息。
+type ReplyParameters struct {
+	MessageID                int64 `json:"message_id"`
+	AllowSendingWithoutReply bool  `json:"allow_sending_without_reply,omitempty"`
+}
+
+type MessageRequest struct {
+	ChatID          int64                 `json:"chat_id"`
+	Text            string                `json:"text"`
+	ReplyParameters *ReplyParameters      `json:"reply_parameters,omitempty"`
+	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type EditMessageRequest struct {
+	ChatID      int64                 `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type SentMessage struct {
+	MessageID int64 `json:"message_id"`
+}
+
+type PhotoRequest struct {
+	ChatID          int64
+	Filename        string
+	Caption         string
+	Data            []byte
+	ReplyParameters *ReplyParameters
 }
 
 // AuthorizationManager 提供任务授权检查和 owner 专用的授权名单管理。
@@ -108,8 +164,16 @@ type Renderer interface {
 // Update 是 getUpdates 响应中本包关心的最小更新结构。
 // 非 message 更新会被 Bot 忽略，但其 UpdateID 仍会推进，避免重复拉取。
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message,omitempty"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message,omitempty"`
+	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
+}
+
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    User     `json:"from"`
+	Message *Message `json:"message,omitempty"`
+	Data    string   `json:"data,omitempty"`
 }
 
 // Message 是 Telegram 文本消息的最小投影。
@@ -151,11 +215,51 @@ type TaskRequest struct {
 	Principal       Principal
 	Source          string
 	SubscriptionURL string
+	CandidateCount  int
+	TopN            int
+	Threads         int
+	ClientIDs       []string
+}
+
+// ClientOption 是 Bot 节点选择器可展示的在线 Client。
+type ClientOption struct {
+	ID   string
+	Name string
+}
+
+// ClientProvider 是 Runner 的可选节点发现扩展。
+type ClientProvider interface {
+	ListAvailableClients(ctx context.Context) ([]ClientOption, error)
+}
+
+// TaskProgress 是 Bot 可公开展示的脱敏任务进度。
+type TaskProgress struct {
+	Status       string
+	Phase        string
+	ProxyName    string
+	Message      string
+	Current      int
+	Total        int
+	RateBPS      float64
+	Results      int
+	ClientID     string
+	ClientName   string
+	TargetStatus string
+}
+
+// ProgressRunner 是 Runner 的可选扩展。生产适配器实现它以实时编辑 Telegram
+// 状态消息；简单测试 Runner 可继续只实现 Wait。
+type ProgressRunner interface {
+	WaitWithProgress(ctx context.Context, taskID string, onProgress func(TaskProgress)) (Completion, error)
 }
 
 // Task 是 Runner 创建成功后的最小任务引用。
 type Task struct {
-	ID string
+	ID          string
+	ClientCount int
+	ProxyCount  int
+	TopN        int
+	Clients     []ClientOption
 }
 
 // Completion 描述 Runner.Wait 返回的任务终态。
@@ -169,7 +273,8 @@ type Completion struct {
 
 // Image 是 Renderer 生成的上传对象。
 type Image struct {
-	Filename string
-	Caption  string
-	Data     []byte
+	Filename        string
+	Caption         string
+	Data            []byte
+	ReplyParameters *ReplyParameters
 }

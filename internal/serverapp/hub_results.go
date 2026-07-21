@@ -98,6 +98,7 @@ func (h *Hub) finishTargetLocked(ctx context.Context, taskID, clientID string, e
 		}
 	}
 	h.mu.Unlock()
+	h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: transition.TargetStatus})
 	if removed {
 		h.publish(taskID, taskEvent{Type: "status", Status: transition.TaskStatus, Message: transition.Detail})
 	}

@@ -10,14 +10,18 @@ import (
 )
 
 type sentMessage struct {
-	chatID int64
-	text   string
+	chatID    int64
+	messageID int64
+	text      string
+	replyTo   int64
+	markup    *InlineKeyboardMarkup
 }
 
 type sentPhoto struct {
 	chatID            int64
 	filename, caption string
 	data              []byte
+	replyTo           int64
 }
 
 type fakeAPI struct {
@@ -27,6 +31,10 @@ type fakeAPI struct {
 	messages    []sentMessage
 	photos      []sentPhoto
 	photoSignal chan struct{}
+	commands    []BotCommand
+	edits       []EditMessageRequest
+	callbacks   []string
+	deleted     []int64
 }
 
 func newFakeAPI(updates []Update) *fakeAPI {
@@ -51,16 +59,53 @@ func (a *fakeAPI) GetUpdates(ctx context.Context, offset int64, _ time.Duration)
 	return nil, ctx.Err()
 }
 
-func (a *fakeAPI) SendMessage(_ context.Context, chatID int64, text string) error {
+func (a *fakeAPI) SetMyCommands(_ context.Context, commands []BotCommand) error {
 	a.mu.Lock()
-	a.messages = append(a.messages, sentMessage{chatID: chatID, text: text})
+	a.commands = append([]BotCommand(nil), commands...)
 	a.mu.Unlock()
 	return nil
 }
 
-func (a *fakeAPI) SendPhoto(_ context.Context, chatID int64, filename, caption string, data []byte) error {
+func (a *fakeAPI) SendMessage(_ context.Context, request MessageRequest) (SentMessage, error) {
 	a.mu.Lock()
-	a.photos = append(a.photos, sentPhoto{chatID: chatID, filename: filename, caption: caption, data: append([]byte(nil), data...)})
+	messageID := int64(len(a.messages) + 100)
+	replyTo := int64(0)
+	if request.ReplyParameters != nil {
+		replyTo = request.ReplyParameters.MessageID
+	}
+	a.messages = append(a.messages, sentMessage{chatID: request.ChatID, messageID: messageID, text: request.Text, replyTo: replyTo, markup: request.ReplyMarkup})
+	a.mu.Unlock()
+	return SentMessage{MessageID: messageID}, nil
+}
+
+func (a *fakeAPI) EditMessageText(_ context.Context, request EditMessageRequest) error {
+	a.mu.Lock()
+	a.edits = append(a.edits, request)
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *fakeAPI) AnswerCallbackQuery(_ context.Context, callbackQueryID, _ string) error {
+	a.mu.Lock()
+	a.callbacks = append(a.callbacks, callbackQueryID)
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *fakeAPI) DeleteMessage(_ context.Context, _ int64, messageID int64) error {
+	a.mu.Lock()
+	a.deleted = append(a.deleted, messageID)
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *fakeAPI) SendPhoto(_ context.Context, request PhotoRequest) error {
+	a.mu.Lock()
+	replyTo := int64(0)
+	if request.ReplyParameters != nil {
+		replyTo = request.ReplyParameters.MessageID
+	}
+	a.photos = append(a.photos, sentPhoto{chatID: request.ChatID, filename: request.Filename, caption: request.Caption, data: append([]byte(nil), request.Data...), replyTo: replyTo})
 	a.mu.Unlock()
 	a.photoSignal <- struct{}{}
 	return nil
@@ -70,6 +115,18 @@ func (a *fakeAPI) snapshot() ([]sentMessage, []sentPhoto, []int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]sentMessage(nil), a.messages...), append([]sentPhoto(nil), a.photos...), append([]int64(nil), a.offsets...)
+}
+
+func (a *fakeAPI) editsSnapshot() []EditMessageRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]EditMessageRequest(nil), a.edits...)
+}
+
+func (a *fakeAPI) commandsSnapshot() []BotCommand {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]BotCommand(nil), a.commands...)
 }
 
 type fakeAuthorization struct {
@@ -138,6 +195,14 @@ type fakeRunner struct {
 	cancelStart chan struct{}
 	cancelGate  chan struct{}
 	cancelOnce  sync.Once
+	clients     []ClientOption
+}
+
+func (r *fakeRunner) ListAvailableClients(context.Context) ([]ClientOption, error) {
+	if len(r.clients) == 0 {
+		return []ClientOption{{ID: "client-1", Name: "client-1"}}, nil
+	}
+	return append([]ClientOption(nil), r.clients...), nil
 }
 
 func (r *fakeRunner) Submit(ctx context.Context, request TaskRequest) (Task, error) {
@@ -157,7 +222,24 @@ func (r *fakeRunner) Submit(ctx context.Context, request TaskRequest) (Task, err
 		return Task{}, r.submitErr
 	}
 	r.requests = append(r.requests, request)
-	return Task{ID: fmt.Sprintf("task-%d", len(r.requests))}, nil
+	clients := r.clients
+	if len(clients) == 0 {
+		clients = []ClientOption{{ID: "client-1", Name: "client-1"}}
+	}
+	if len(request.ClientIDs) > 0 {
+		byID := make(map[string]ClientOption, len(clients))
+		for _, client := range clients {
+			byID[client.ID] = client
+		}
+		selected := make([]ClientOption, 0, len(request.ClientIDs))
+		for _, id := range request.ClientIDs {
+			if client, ok := byID[id]; ok {
+				selected = append(selected, client)
+			}
+		}
+		clients = selected
+	}
+	return Task{ID: fmt.Sprintf("task-%d", len(r.requests)), ClientCount: len(clients), ProxyCount: 1, TopN: max(request.TopN, 1), Clients: append([]ClientOption(nil), clients...)}, nil
 }
 
 func (r *fakeRunner) Wait(ctx context.Context, taskID string) (Completion, error) {
