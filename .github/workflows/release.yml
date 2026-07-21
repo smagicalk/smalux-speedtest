@@ -1,8 +1,12 @@
 name: Build And Release
 
 on:
-  # A published GitHub Release is the only automatic release trigger. The tag is
-  # checked out explicitly below so a later branch change cannot alter an old release.
+  # Main pushes produce downloadable Actions artifacts for quick integration checks.
+  # Version tags produce a GitHub Release and upload the same six platform packages.
+  push:
+    branches: [main]
+    tags: ['v*']
+  # A published GitHub Release remains supported for releases created in the UI.
   release:
     types: [published]
   # Manual runs are useful for validating cross-compilation before publishing a release.
@@ -30,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: smalux-release-${{ github.event.release.tag_name || inputs.release_tag || github.run_id }}
+  group: smalux-release-${{ github.event.release.tag_name || inputs.release_tag || github.ref || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -41,10 +45,10 @@ jobs:
     permissions:
       contents: read
     env:
-      # Uploading to a Release always selects that exact tag. An arbitrary ref is
-      # accepted only when the manual run produces an Actions artifact.
-      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.release_tag != '' && inputs.release_tag || inputs.ref) }}
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      # Release/tag runs select the exact tag. Main and manual runs may build a
+      # branch or commit without publishing a GitHub Release.
+      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' && inputs.release_tag || inputs.ref) || github.ref }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.release_tag || startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
@@ -103,9 +107,9 @@ jobs:
           - goos: darwin
             goarch: arm64
     env:
-      # Release uploads always embed their exact tag. Artifact-only runs use the
-      # independently supplied test version.
-      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.release_tag != '' && inputs.release_tag || inputs.version) }}
+      # Release/tag uploads embed their tag. Main and manual artifact-only runs
+      # use the supplied version or the current ref name.
+      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' && inputs.release_tag || inputs.version) || github.ref_name }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
@@ -208,18 +212,18 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Upload to existing Release
+    name: Publish Release assets
     needs: [test, collect]
-    # A manual run without release_tag intentionally stops after Actions artifacts;
-    # gh release upload never creates a Release implicitly.
-    if: ${{ github.event_name == 'release' || inputs.release_tag != '' }}
+    # Main/manual runs without a release tag intentionally stop after Actions
+    # artifacts. A pushed v* tag creates its Release automatically when needed.
+    if: ${{ github.event_name == 'release' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
       actions: read
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
       TESTED_COMMIT: ${{ needs.test.outputs.commit }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -233,9 +237,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Verify first so a typo cannot create an unintended Release. GitHub CLI
-          # is maintained by GitHub and is preinstalled on ubuntu-latest runners.
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          # A pushed tag creates its Release automatically. Existing Releases are
+          # reused so rerunning a failed workflow is safe and idempotent.
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Smalux Speedtest $RELEASE_TAG" --generate-notes
+          fi
           tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
           if [[ "$tag_commit" != "$TESTED_COMMIT" ]]; then
             printf 'release tag moved after testing; expected %s, found %s\n' \
