@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -18,11 +19,15 @@ func (a *App) listClients(w http.ResponseWriter, r *http.Request) {
 	}
 	type clientView struct {
 		store.Client
-		Online bool `json:"online"`
+		Online     bool `json:"online"`
+		Manageable bool `json:"manageable"`
+		OwnedByMe  bool `json:"owned_by_me"`
 	}
+	session, _ := a.session(r)
 	response := make([]clientView, 0, len(clients))
 	for _, client := range clients {
-		response = append(response, clientView{Client: client, Online: a.hub.Online(client.ID)})
+		owned := client.OwnerAdminID != "" && client.OwnerAdminID == session.userID
+		response = append(response, clientView{Client: client, Online: a.hub.Online(client.ID), Manageable: session.isOwner || owned, OwnedByMe: owned})
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -38,7 +43,8 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	client, token, err := a.store.CreateClient(r.Context(), strings.TrimSpace(input.Name), input.Labels)
+	session, _ := a.session(r)
+	client, token, err := a.store.CreateClientForAdmin(r.Context(), strings.TrimSpace(input.Name), input.Labels, session.userID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -46,13 +52,52 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"client": client, "token": token})
 }
 
+// updateClient 修改名称和标签。普通管理员只能修改自己创建的 Client。
+func (a *App) updateClient(w http.ResponseWriter, r *http.Request) {
+	if !a.canManageClient(r, r.PathValue("id")) {
+		writeError(w, http.StatusForbidden, errors.New("只能修改自己创建的 Client"))
+		return
+	}
+	var input struct {
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	client, err := a.store.UpdateClientMetadata(r.Context(), r.PathValue("id"), strings.TrimSpace(input.Name), input.Labels)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	a.hub.UpdateClientMetadata(client)
+	writeJSON(w, http.StatusOK, client)
+}
+
 // revokeClient 禁用持久化凭据，并通知 Hub 断开当前连接、终止该 Client 的活动目标。
 func (a *App) revokeClient(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.canManageClient(r, id) {
+		writeError(w, http.StatusForbidden, errors.New("只能吊销自己创建的 Client"))
+		return
+	}
 	if err := a.store.RevokeClient(r.Context(), id); err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 	a.hub.RevokeClient(r.Context(), id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *App) canManageClient(r *http.Request, id string) bool {
+	session, ok := a.session(r)
+	if !ok {
+		return false
+	}
+	if session.isOwner {
+		return true
+	}
+	owner, err := a.store.ClientOwner(r.Context(), id)
+	return err == nil && owner != "" && owner == session.userID
 }

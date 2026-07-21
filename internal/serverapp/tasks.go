@@ -26,6 +26,12 @@ func (a *App) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	for _, clientID := range input.ClientIDs {
+		if !a.canManageClient(r, clientID) {
+			writeError(w, http.StatusForbidden, errors.New("普通管理员只能使用自己创建的 Client 创建任务"))
+			return
+		}
+	}
 	created, err := a.startTask(r.Context(), input)
 	if err != nil {
 		var requestError *taskRequestError

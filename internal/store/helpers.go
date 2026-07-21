@@ -23,7 +23,7 @@ func scanClient(row scanner) (Client, error) {
 	var client Client
 	var labelsJSON string
 	var enabled int
-	err := row.Scan(&client.ID, &client.Name, &labelsJSON, &client.Version, &client.OS, &client.Arch, &enabled, &client.LastSeen, &client.CreatedAt)
+	err := row.Scan(&client.ID, &client.OwnerAdminID, &client.Name, &labelsJSON, &client.Version, &client.OS, &client.Arch, &enabled, &client.LastSeen, &client.CreatedAt)
 	if err != nil {
 		return Client{}, err
 	}

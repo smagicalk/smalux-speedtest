@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -86,6 +87,9 @@ func TestWizardClientPaginationAndSelection(t *testing.T) {
 	if state == nil || clientPageCount(state) != 2 || len(clientKeyboard(state).InlineKeyboard) != 9 {
 		t.Fatalf("unexpected first client page: state=%+v keyboard=%+v", state, clientKeyboard(state))
 	}
+	if got := clientKeyboard(state).InlineKeyboard[0][0].Text; !strings.HasPrefix(got, "🟩 ") {
+		t.Fatalf("selected client marker = %q", got)
+	}
 	message := &Message{MessageID: state.controlMessageID, Chat: Chat{ID: 1, Type: "private"}}
 	callback := func(id, action string, values ...string) {
 		bot.handleUpdate(t.Context(), Update{CallbackQuery: &CallbackQuery{ID: id, From: User{ID: 1}, Message: message, Data: wizardData(state.id, action, values...)}})
@@ -95,6 +99,9 @@ func TestWizardClientPaginationAndSelection(t *testing.T) {
 		t.Fatal("client pagination did not advance")
 	}
 	callback("clear", "client-none")
+	if got := clientKeyboard(bot.loadWizard(1)).InlineKeyboard[0][0].Text; !strings.HasPrefix(got, "□ ") {
+		t.Fatalf("unselected client marker = %q", got)
+	}
 	callback("empty-next", "client-next")
 	if bot.loadWizard(1).stage != wizardClients {
 		t.Fatal("empty client selection advanced the wizard")

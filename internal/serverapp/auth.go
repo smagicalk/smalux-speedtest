@@ -14,6 +14,7 @@ type pageData struct {
 	CSRF           string
 	CurrentAdminID string
 	Username       string
+	IsOwner        bool
 }
 
 type loginPageData struct {
@@ -54,7 +55,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Error: "用户名或密码错误", Username: username})
 		return
 	}
-	session := a.sessions.create(admin.ID, admin.Username)
+	session := a.sessions.create(admin.ID, admin.Username, admin.IsOwner)
 	http.SetCookie(w, &http.Cookie{
 		Name: "smalux_session", Value: session.token, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
@@ -76,7 +77,19 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.session(r)
 	_ = a.template.ExecuteTemplate(w, "dashboard.html", pageData{
-		CSRF: session.csrf, CurrentAdminID: session.userID, Username: session.username,
+		CSRF: session.csrf, CurrentAdminID: session.userID, Username: session.username, IsOwner: session.isOwner,
+	})
+}
+
+// requireOwner 将管理员账户管理等最高权限操作限制给首次引导账户。
+func (a *App) requireOwner(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := a.session(r)
+		if !ok || !session.isOwner {
+			writeError(w, http.StatusForbidden, errors.New("仅最高权限管理员可以执行此操作"))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

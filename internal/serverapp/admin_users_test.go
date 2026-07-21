@@ -56,8 +56,8 @@ func TestAdminUserManagementAndSessionRevocation(t *testing.T) {
 
 	operatorClient, _ := loginAdminForTest(t, server.URL, "operator", "operator-password")
 	response, err := operatorClient.Get(server.URL + "/api/admin-users")
-	if err != nil || response.StatusCode != http.StatusOK {
-		t.Fatalf("operator session before disable = %v, %v", response, err)
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("operator administrator access = %v, %v", response, err)
 	}
 	response.Body.Close()
 

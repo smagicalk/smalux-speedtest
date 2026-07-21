@@ -112,6 +112,7 @@ legend { margin: 0; }
 .check-option .client-state { margin-left: auto; font-size: .72rem; color: var(--muted); }
 .check-option .client-state.online { color: var(--accent); }
 .check-option input { width: 16px; min-height: 16px; accent-color: var(--accent); }
+.check-option.readonly { opacity: .68; cursor: default; }
 .check-option span { overflow: hidden; text-overflow: ellipsis; }
 .form-actions { justify-content: flex-end; margin-top: 18px; }
 .alert { margin: 14px 0 0; padding: 10px 12px; border-radius: 5px; }

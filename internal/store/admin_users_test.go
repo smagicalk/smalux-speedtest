@@ -25,6 +25,9 @@ func TestAdminUsersLifecycleAndLastEnabledInvariant(t *testing.T) {
 	if err != nil || admin.Username != "admin" {
 		t.Fatalf("bootstrap authentication = %+v, %v", admin, err)
 	}
+	if !admin.IsOwner {
+		t.Fatal("bootstrap admin is not marked as owner")
+	}
 	if _, err := database.CreateAdminUser(t.Context(), "bad user", "valid-password"); !errors.Is(err, ErrInvalidAdminUsername) {
 		t.Fatalf("invalid username error = %v", err)
 	}
@@ -75,7 +78,7 @@ func TestAdminUsersLifecycleAndLastEnabledInvariant(t *testing.T) {
 	}
 	lastEnabledErrors := 0
 	for _, err := range errorsByID {
-		if errors.Is(err, ErrAdminUserLastEnabled) {
+		if errors.Is(err, ErrAdminUserLastEnabled) || errors.Is(err, ErrAdminOwnerProtected) {
 			lastEnabledErrors++
 		} else if err != nil {
 			t.Fatalf("unexpected concurrent disable error: %v", err)
@@ -141,24 +144,28 @@ func TestLegacyAdminHashMigratesOnceAndIsRemoved(t *testing.T) {
 	if err != nil || len(users) != 1 {
 		t.Fatalf("migrated administrators = %+v, %v", users, err)
 	}
-	if _, err := database.CreateAdminUser(t.Context(), "operator", "operator-password"); err != nil {
+	operator, err := database.CreateAdminUser(t.Context(), "operator", "operator-password")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.DeleteAdminUser(t.Context(), users[0].ID); err != nil {
+	if err := database.DeleteAdminUser(t.Context(), users[0].ID); !errors.Is(err, ErrAdminOwnerProtected) {
+		t.Fatalf("owner deletion error = %v", err)
+	}
+	if err := database.DeleteAdminUser(t.Context(), operator.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	// 删除迁移得到的 admin 后再次启动，不得根据旧 setting 将其复活。
+	// Owner 不能被删除；删除普通账户后重启，旧 setting 也不能再创建额外账户。
 	reopened, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
 	afterRestart, err := reopened.ListAdminUsers(t.Context())
-	if err != nil || len(afterRestart) != 1 || afterRestart[0].Username != "operator" {
+	if err != nil || len(afterRestart) != 1 || afterRestart[0].Username != "admin" || !afterRestart[0].IsOwner {
 		t.Fatalf("administrator resurrected after restart: %+v, %v", afterRestart, err)
 	}
 }

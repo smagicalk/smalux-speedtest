@@ -26,8 +26,8 @@ func (s *Store) CreateAdminUser(ctx context.Context, username, password string) 
 	timestamp := now()
 	user := AdminUser{ID: model.NewID(), Username: canonical, Enabled: true, CreatedAt: timestamp, UpdatedAt: timestamp}
 	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO admin_users
-		(id,username,password_hash,enabled,created_at,updated_at,last_login_at)
-		VALUES(?,?,?,1,?,?,?)`, user.ID, user.Username, string(hash), timestamp, timestamp, "")
+		(id,username,password_hash,enabled,created_at,updated_at,last_login_at,is_owner)
+		VALUES(?,?,?,1,?,?,?,0)`, user.ID, user.Username, string(hash), timestamp, timestamp, "")
 	if err != nil {
 		return AdminUser{}, err
 	}
@@ -43,7 +43,7 @@ func (s *Store) CreateAdminUser(ctx context.Context, username, password string) 
 
 // ListAdminUsers 返回账户公开元数据，绝不选择 password_hash。
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,username,enabled,created_at,updated_at,last_login_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id,username,enabled,is_owner,created_at,updated_at,last_login_at
 		FROM admin_users ORDER BY username COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
@@ -52,11 +52,12 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	users := make([]AdminUser, 0)
 	for rows.Next() {
 		var user AdminUser
-		var enabled int
-		if err := rows.Scan(&user.ID, &user.Username, &enabled, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt); err != nil {
+		var enabled, owner int
+		if err := rows.Scan(&user.ID, &user.Username, &enabled, &owner, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt); err != nil {
 			return nil, err
 		}
 		user.Enabled = enabled != 0
+		user.IsOwner = owner != 0
 		user.CreatedAt = normalizePersistedTimestamp(user.CreatedAt)
 		user.UpdatedAt = normalizePersistedTimestamp(user.UpdatedAt)
 		user.LastLoginAt = normalizePersistedTimestamp(user.LastLoginAt)
@@ -72,13 +73,16 @@ func (s *Store) SetAdminUserEnabled(ctx context.Context, id string, enabled bool
 		return err
 	}
 	defer tx.Rollback()
-	var current int
-	err = tx.QueryRowContext(ctx, `SELECT enabled FROM admin_users WHERE id=?`, id).Scan(&current)
+	var current, owner int
+	err = tx.QueryRowContext(ctx, `SELECT enabled,is_owner FROM admin_users WHERE id=?`, id).Scan(&current, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrAdminUserNotFound
 	}
 	if err != nil {
 		return err
+	}
+	if owner != 0 {
+		return ErrAdminOwnerProtected
 	}
 	if !enabled && current != 0 {
 		var count int
@@ -102,13 +106,16 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	var enabled int
-	err = tx.QueryRowContext(ctx, `SELECT enabled FROM admin_users WHERE id=?`, id).Scan(&enabled)
+	var enabled, owner int
+	err = tx.QueryRowContext(ctx, `SELECT enabled,is_owner FROM admin_users WHERE id=?`, id).Scan(&enabled, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrAdminUserNotFound
 	}
 	if err != nil {
 		return err
+	}
+	if owner != 0 {
+		return ErrAdminOwnerProtected
 	}
 	if enabled != 0 {
 		var count int

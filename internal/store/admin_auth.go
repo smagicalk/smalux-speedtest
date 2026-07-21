@@ -19,10 +19,10 @@ func (s *Store) AuthenticateAdmin(ctx context.Context, username, password string
 	}
 	var user AdminUser
 	var hash string
-	var enabled int
-	err = s.db.QueryRowContext(ctx, `SELECT id,username,password_hash,enabled,created_at,updated_at,last_login_at
+	var enabled, owner int
+	err = s.db.QueryRowContext(ctx, `SELECT id,username,password_hash,enabled,is_owner,created_at,updated_at,last_login_at
 		FROM admin_users WHERE username=? COLLATE NOCASE`, canonical).
-		Scan(&user.ID, &user.Username, &hash, &enabled, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
+		Scan(&user.ID, &user.Username, &hash, &enabled, &owner, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
 	if err != nil {
 		hash = dummyAdminPasswordHash
 	}
@@ -31,6 +31,7 @@ func (s *Store) AuthenticateAdmin(ctx context.Context, username, password string
 		return AdminUser{}, ErrInvalidAdminCredentials
 	}
 	user.Enabled = true
+	user.IsOwner = owner != 0
 	timestamp := now()
 	result, updateErr := s.db.ExecContext(ctx, `UPDATE admin_users SET last_login_at=? WHERE id=? AND enabled=1`, timestamp, user.ID)
 	if updateErr != nil {

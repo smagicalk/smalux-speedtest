@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{.CSRF}}">
   <meta name="current-admin-id" content="{{.CurrentAdminID}}">
+  <meta name="current-admin-owner" content="{{.IsOwner}}">
   <title>Smalux Speedtest</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -45,7 +46,7 @@
     </section>
 
     <!-- 管理员账户与 Client 凭据分开管理；当前账户和最后一个启用账户受后端保护。 -->
-    <section class="section" id="admins-section">
+    {{if .IsOwner}}<section class="section" id="admins-section">
       <div class="section-heading">
         <div><h2>管理员账户</h2><p>控制台登录与访问状态</p></div>
         <button id="new-admin" class="primary" type="button">添加管理员</button>
@@ -56,7 +57,7 @@
           <tbody id="admins-body"><tr><td colspan="5" class="empty">正在加载</td></tr></tbody>
         </table>
       </div>
-    </section>
+    </section>{{end}}
 
     <!-- 代理正文不会持久化；创建成功后仅通过 WebSocket 下发给选中的 Client。 -->
     <section class="section task-builder">
@@ -69,9 +70,9 @@
             <div class="field-tools"><span class="input-hint">支持单条、批量和 Base64；每行一条，也可与订阅 URL 合并。</span><button id="paste-source" class="quiet compact" type="button">粘贴</button><button id="clear-source" class="quiet compact" type="button">清空</button></div>
           </div>
           <label class="field wide"><span>订阅 URL</span><input name="subscription_url" type="url" autocomplete="url" placeholder="https://example.com/subscription"><small class="input-hint">服务端会执行 SSRF 防护并限制响应大小。</small></label>
-          <label class="field"><span>候选测速节点</span><input name="candidate_count" type="number" value="10" min="1" max="50" required></label>
+          <label class="field"><span>候选测速节点</span><select name="candidate_count" required><option value="1">1</option><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select></label>
           <label class="field"><span>执行上下行节点</span><select name="top_n"><option value="1">Top 1</option><option value="2">Top 2</option><option value="3" selected>Top 3</option></select></label>
-          <label class="field"><span>测速线程数</span><input name="threads" type="number" value="4" min="1" max="32" required></label>
+          <label class="field"><span>测速线程数</span><select name="threads" required><option value="1">1</option><option value="4" selected>4</option><option value="8">8</option><option value="16">16</option><option value="32">32</option></select></label>
         </div>
         <fieldset>
           <div class="field-label selection-heading"><legend>目标 Client</legend><span id="selected-client-count" class="field-meta">0 个已选择</span></div>
@@ -107,13 +108,24 @@
   </dialog>
 
   <dialog id="admin-dialog">
-    <form id="admin-form" method="dialog">
+    <form id="admin-form">
       <div class="dialog-heading"><h2>添加管理员</h2><button class="icon-button close-admin" type="button" title="关闭" aria-label="关闭">×</button></div>
-      <label class="field"><span>用户名</span><input name="username" autocomplete="off" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" required></label>
+      <label class="field"><span>用户名</span><input name="username" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" required></label>
       <label class="field"><span>密码</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
       <label class="field"><span>确认密码</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
       <div id="admin-error" class="alert error hidden" role="alert"></div>
       <div class="form-actions"><button class="quiet close-admin" type="button">取消</button><button class="primary" type="submit">创建</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="edit-client-dialog">
+    <form id="edit-client-form">
+      <div class="dialog-heading"><h2>编辑测速节点</h2><button class="icon-button close-edit-client" type="button" title="关闭" aria-label="关闭">×</button></div>
+      <input type="hidden" name="id">
+      <label class="field"><span>名称</span><input name="name" required maxlength="80"></label>
+      <label class="field"><span>标签</span><input name="labels" placeholder="region=hk, provider=example"></label>
+      <div id="edit-client-error" class="alert error hidden" role="alert"></div>
+      <div class="form-actions"><button class="quiet close-edit-client" type="button">取消</button><button class="primary" type="submit">保存</button></div>
     </form>
   </dialog>
 

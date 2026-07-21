@@ -25,9 +25,9 @@ Set the administrator password on the first start. The initial username is `admi
 SMALUX_ADMIN_PASSWORD='change-this-password' go run ./server -listen 127.0.0.1:8080 -db smalux-speedtest.db
 ```
 
-Open `http://127.0.0.1:8080`, log in, create a client, and retain the token shown once. The dashboard can create, disable, re-enable, and delete additional administrator accounts. It prevents the current session from disabling or deleting itself and always preserves at least one enabled administrator.
+Open `http://127.0.0.1:8080`, log in, create a client, and retain the token shown once. The first `admin` account is the unique highest-privilege administrator and can create, disable, re-enable, and delete additional administrator accounts. Ordinary administrators can see every Client as read-only operational status, but can edit, revoke, and use only the Clients they created; the highest-privilege administrator can manage all Clients. Client display names and labels can be edited from the dashboard without rotating their tokens.
 
-Each task can use 1-32 concurrent speedtest connections (4 by default). Completed results can be exported as CSV or as a branded PNG report from the task detail page.
+Task candidate count, Top N, and thread count use bounded dashboard selectors. Each task can use 1-32 concurrent speedtest connections (4 by default). Completed results can be exported as CSV or as a branded PNG report from the task detail page.
 
 ## Telegram Bot (optional)
 

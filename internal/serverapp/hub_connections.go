@@ -6,6 +6,7 @@ import (
 	"github.com/coder/websocket"
 
 	"smalux-speedtest/internal/logsafe"
+	"smalux-speedtest/internal/store"
 )
 
 // register 将新连接设为指定 Client 的唯一活动连接。
@@ -70,6 +71,16 @@ func (h *Hub) RevokeClient(ctx context.Context, clientID string) {
 	for _, taskID := range activeTasks {
 		h.finishTarget(ctx, taskID, clientID, "failed", "client token revoked")
 	}
+}
+
+// UpdateClientMetadata 刷新在线 peer 的管理员维护字段，让后续进度立即使用新名称。
+func (h *Hub) UpdateClientMetadata(client store.Client) {
+	h.mu.Lock()
+	if connected := h.peers[client.ID]; connected != nil {
+		connected.client.Name = client.Name
+		connected.client.Labels = client.Labels
+	}
+	h.mu.Unlock()
 }
 
 // unregister 清理一个已经结束的连接。

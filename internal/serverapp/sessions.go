@@ -18,6 +18,7 @@ type session struct {
 	// username 只用于页面展示。
 	userID   string
 	username string
+	isOwner  bool
 	// expires 是服务端判定会话失效的绝对时间。
 	expires time.Time
 }
@@ -36,9 +37,10 @@ type sessionStore struct {
 func newSessionStore() *sessionStore { return &sessionStore{sessions: make(map[string]*session)} }
 
 // create 生成一对独立随机 token/csrf 值，并登记一个绑定账户、12 小时有效的会话。
-func (s *sessionStore) create(userID, username string) *session {
+func (s *sessionStore) create(userID, username string, owner ...bool) *session {
+	isOwner := len(owner) > 0 && owner[0]
 	value := &session{
-		token: secureToken(), csrf: secureToken(), userID: userID, username: username,
+		token: secureToken(), csrf: secureToken(), userID: userID, username: username, isOwner: isOwner,
 		expires: time.Now().Add(12 * time.Hour),
 	}
 	s.mu.Lock()

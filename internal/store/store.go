@@ -21,6 +21,8 @@ type Store struct {
 type Client struct {
 	// ID 是服务端生成且长期稳定的 Client 标识。
 	ID string `json:"id"`
+	// OwnerAdminID 是创建该凭据的管理员。它只用于服务端授权，不进入管理 API。
+	OwnerAdminID string `json:"-"`
 	// Name 是管理员创建的稳定显示名称；远端 Client Hello 无权覆盖。
 	Name string `json:"name"`
 	// Labels 是管理员维护的地区、线路或提供商等元数据；远端 Client Hello 无权覆盖。

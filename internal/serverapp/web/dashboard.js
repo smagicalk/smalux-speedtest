@@ -34,7 +34,7 @@ function setSyncStatus(state, text) {
 }
 
 function selectedClientIDs() {
-  return new Set([...document.querySelectorAll('#client-options input[name="client_id"]:checked')].map(input => input.value));
+  return new Set([...document.querySelectorAll('#client-options input[name="client_id"]:checked:not(:disabled)')].map(input => input.value));
 }
 
 function updateSelectionSummary() {
@@ -54,11 +54,11 @@ function renderClientOptions(previousSelection, firstRender) {
     return;
   }
   const selected = new Set(previousSelection);
-  if (firstRender && selected.size === 0) available.filter(item => item.online).forEach(item => selected.add(item.id));
+  if (firstRender && selected.size === 0) available.filter(item => item.online && item.manageable).forEach(item => selected.add(item.id));
   $('#client-options').innerHTML = available.map(item => `
-    <label class="check-option ${item.online ? '' : 'offline'}">
-      <input type="checkbox" name="client_id" value="${escapeHTML(item.id)}" ${selected.has(item.id) ? 'checked' : ''}>
-      <span>${escapeHTML(item.name)}</span><span class="client-state ${item.online ? 'online' : ''}">${item.online ? '在线' : '离线'}</span>
+    <label class="check-option ${item.online ? '' : 'offline'} ${item.manageable ? '' : 'readonly'}">
+      <input type="checkbox" name="client_id" value="${escapeHTML(item.id)}" ${selected.has(item.id) && item.manageable ? 'checked' : ''} ${item.manageable ? '' : 'disabled'}>
+      <span>${escapeHTML(item.name)}</span><span class="client-state ${item.online ? 'online' : ''}">${item.online ? '在线' : '离线'}${item.manageable ? '' : ' · 只读'}</span>
     </label>`).join('');
   updateSelectionSummary();
 }
@@ -91,7 +91,7 @@ async function loadClients({force = false} = {}) {
         <td class="mono">${escapeHTML(item.version || '—')}</td>
         <td>${Object.entries(item.labels || {}).map(([key,value]) => `<span class="tag">${escapeHTML(key)}=${escapeHTML(value)}</span>`).join('') || '—'}</td>
         <td>${dateText(item.last_seen)}</td>
-        <td><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" type="button">吊销</button></td>
+        <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" type="button">编辑</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
       </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无 Client</td></tr>';
     renderClientOptions(previousSelection, firstRender);
     return clients;
@@ -154,21 +154,23 @@ $('#refresh').addEventListener('click', () => refresh().catch(() => {}));
 $('#new-client').addEventListener('click', () => {
   $('#client-error').classList.add('hidden');
   $('#client-dialog').showModal();
+  $('#client-form input[name="name"]').focus();
 });
 document.querySelectorAll('.close-dialog').forEach(button => button.addEventListener('click', () => $('#client-dialog').close()));
 document.querySelectorAll('.close-token').forEach(button => button.addEventListener('click', () => $('#token-dialog').close()));
+document.querySelectorAll('.close-edit-client').forEach(button => button.addEventListener('click', () => $('#edit-client-dialog').close()));
 
 // Client 选择工具栏减少大量节点时的重复点击，并在每次勾选后即时显示数量。
 $('#client-options').addEventListener('change', updateSelectionSummary);
 $('#select-online').addEventListener('click', () => {
   document.querySelectorAll('#client-options input[name="client_id"]').forEach(input => {
     const client = clients.find(item => item.id === input.value);
-    input.checked = Boolean(client?.online);
+    input.checked = !input.disabled && Boolean(client?.online);
   });
   updateSelectionSummary();
 });
 $('#select-all').addEventListener('click', () => {
-  document.querySelectorAll('#client-options input[name="client_id"]').forEach(input => { input.checked = true; });
+  document.querySelectorAll('#client-options input[name="client_id"]:not(:disabled)').forEach(input => { input.checked = true; });
   updateSelectionSummary();
 });
 $('#clear-selection').addEventListener('click', () => {
@@ -220,11 +222,50 @@ $('#copy-token').addEventListener('click', async () => {
 
 // 吊销会使数据库认证和当前 WebSocket 连接同时失效，历史结果仍保留 Client 关联。
 $('#clients-body').addEventListener('click', async event => {
+  const editButton = event.target.closest('.edit-client');
+  if (editButton) {
+    const client = clients.find(item => item.id === editButton.dataset.id);
+    if (!client || !client.manageable) return;
+    const form = $('#edit-client-form');
+    form.elements.id.value = client.id;
+    form.elements.name.value = client.name;
+    form.elements.labels.value = Object.entries(client.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ');
+    $('#edit-client-error').classList.add('hidden');
+    $('#edit-client-dialog').showModal();
+    form.elements.name.focus();
+    return;
+  }
   const button = event.target.closest('.revoke-client');
   if (!button || !confirm('确认吊销此 Client Token？')) return;
   button.disabled = true;
   try { await api(`/api/clients/${button.dataset.id}`, {method:'DELETE'}); await loadClients({force: true}); showToast('Client Token 已吊销。', 'success'); }
   catch (error) { button.disabled = false; showToast(error.message, 'error'); }
+});
+
+$('#edit-client-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
+  const labels = {};
+  String(form.get('labels') || '').split(',').map(value => value.trim()).filter(Boolean).forEach(pair => {
+    const [key, ...rest] = pair.split('=');
+    if (key && rest.length) labels[key.trim()] = rest.join('=').trim();
+  });
+  const errorBox = $('#edit-client-error');
+  const submit = formElement.querySelector('button[type="submit"]');
+  errorBox.classList.add('hidden');
+  submit.disabled = true;
+  try {
+    await api(`/api/clients/${encodeURIComponent(form.get('id'))}`, {method:'PATCH', body:JSON.stringify({name:form.get('name'), labels})});
+    $('#edit-client-dialog').close();
+    await loadClients({force: true});
+    showToast('测速节点信息已更新。', 'success');
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.classList.remove('hidden');
+  } finally {
+    submit.disabled = false;
+  }
 });
 
 // 来源输入的字数和剪贴板操作让批量导入反馈更及时；读取剪贴板失败不影响手动粘贴。
@@ -245,6 +286,14 @@ $('#paste-source').addEventListener('click', async () => {
 
 $('#task-filter').addEventListener('change', renderTasks);
 $('#task-search').addEventListener('input', renderTasks);
+
+function syncTopNOptions() {
+  const candidates = Number($('#task-form select[name="candidate_count"]').value);
+  const topN = $('#task-form select[name="top_n"]');
+  [...topN.options].forEach(option => { option.disabled = Number(option.value) > candidates; });
+  if (Number(topN.value) > candidates) topN.value = String(Math.min(3, candidates));
+}
+$('#task-form select[name="candidate_count"]').addEventListener('change', syncTopNOptions);
 
 // 将任务表单组装为 API 模型；本地先校验明显缺项，减少无效请求和等待。
 $('#task-form').addEventListener('submit', async event => {
@@ -291,5 +340,6 @@ $('#task-form').addEventListener('submit', async event => {
 
 // 首屏立即加载；之后低频轮询用于修正断线或错过事件造成的状态差异。
 updateSourceCount();
+syncTopNOptions();
 refresh().catch(() => {});
 setInterval(() => refresh().catch(() => {}), 15000);

@@ -106,6 +106,8 @@ func writeAdminUserError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, errors.New("必须保留至少一个启用的管理员"))
 	case errors.Is(err, store.ErrAdminUserNotFound):
 		writeError(w, http.StatusNotFound, errors.New("管理员不存在"))
+	case errors.Is(err, store.ErrAdminOwnerProtected):
+		writeError(w, http.StatusConflict, errors.New("最高权限管理员不能停用或删除"))
 	default:
 		writeError(w, http.StatusInternalServerError, err)
 	}

@@ -16,6 +16,11 @@ import (
 // 数据库只保存 SHA-256 哈希，后续无法从数据库恢复明文令牌。这里使用快速哈希是
 // 因为令牌本身具有 256 位随机熵，不依赖人类密码的低熵特征；管理员密码仍使用 bcrypt。
 func (s *Store) CreateClient(ctx context.Context, name string, labels map[string]string) (Client, string, error) {
+	return s.CreateClientForAdmin(ctx, name, labels, "")
+}
+
+// CreateClientForAdmin 记录创建者，用于普通管理员只能修改自己 Client 的授权边界。
+func (s *Store) CreateClientForAdmin(ctx context.Context, name string, labels map[string]string, ownerAdminID string) (Client, string, error) {
 	if strings.TrimSpace(name) == "" {
 		return Client{}, "", errors.New("client name is required")
 	}
@@ -24,12 +29,12 @@ func (s *Store) CreateClient(ctx context.Context, name string, labels map[string
 		return Client{}, "", err
 	}
 	client := Client{
-		ID: model.NewID(), Name: model.NormalizeClientName(name), Labels: model.NormalizeClientLabels(labels),
+		ID: model.NewID(), OwnerAdminID: strings.TrimSpace(ownerAdminID), Name: model.NormalizeClientName(name), Labels: model.NormalizeClientLabels(labels),
 		Enabled: true, CreatedAt: now(),
 	}
 	labelsJSON, _ := json.Marshal(client.Labels)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO clients(id,name,token_hash,labels_json,created_at) VALUES(?,?,?,?,?)`,
-		client.ID, client.Name, tokenHash(token), string(labelsJSON), client.CreatedAt)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO clients(id,owner_admin_id,name,token_hash,labels_json,created_at) VALUES(?,?,?,?,?,?)`,
+		client.ID, client.OwnerAdminID, client.Name, tokenHash(token), string(labelsJSON), client.CreatedAt)
 	return client, token, err
 }
 
@@ -39,7 +44,7 @@ func (s *Store) AuthenticateClient(ctx context.Context, token string) (Client, e
 	if token == "" {
 		return Client{}, errors.New("missing token")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients WHERE token_hash=?`, tokenHash(token))
+	row := s.db.QueryRowContext(ctx, `SELECT id,owner_admin_id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients WHERE token_hash=?`, tokenHash(token))
 	client, err := scanClient(row)
 	if err != nil {
 		return Client{}, errors.New("invalid client token")
@@ -70,6 +75,36 @@ func (s *Store) RevokeClient(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateClientMetadata 修改管理员维护的名称和标签，不触碰 Token 或运行时平台信息。
+func (s *Store) UpdateClientMetadata(ctx context.Context, id, name string, labels map[string]string) (Client, error) {
+	if strings.TrimSpace(name) == "" {
+		return Client{}, errors.New("client name is required")
+	}
+	normalizedName := model.NormalizeClientName(name)
+	normalizedLabels := model.NormalizeClientLabels(labels)
+	labelsJSON, _ := json.Marshal(normalizedLabels)
+	result, err := s.db.ExecContext(ctx, `UPDATE clients SET name=?,labels_json=? WHERE id=? AND enabled=1`, normalizedName, string(labelsJSON), id)
+	if err != nil {
+		return Client{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return Client{}, err
+	}
+	if changed == 0 {
+		return Client{}, sql.ErrNoRows
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT id,owner_admin_id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients WHERE id=?`, id)
+	return scanClient(row)
+}
+
+// ClientOwner 返回 Client 创建者；空值表示升级前创建、仅最高权限可管理。
+func (s *Store) ClientOwner(ctx context.Context, id string) (string, error) {
+	var owner string
+	err := s.db.QueryRowContext(ctx, `SELECT owner_admin_id FROM clients WHERE id=? AND enabled=1`, id).Scan(&owner)
+	return owner, err
+}
+
 // ListClients 返回全部 Client 元数据，包含已撤销行；任务校验和历史关联需要这份
 // 完整快照。查询明确不包含 token_hash。
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
@@ -86,7 +121,7 @@ func (s *Store) ListEnabledClients(ctx context.Context) ([]Client, error) {
 // listClients 共享 Client 元数据扫描逻辑；whereClause 只由本文件中的固定常量传入，
 // 不接受外部输入，避免把筛选条件拼接成 SQL 注入入口。
 func (s *Store) listClients(ctx context.Context, whereClause string) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients`+whereClause+` ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,owner_admin_id,name,labels_json,version,os,arch,enabled,last_seen,created_at FROM clients`+whereClause+` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

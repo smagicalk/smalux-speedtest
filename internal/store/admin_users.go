@@ -19,6 +19,7 @@ type AdminUser struct {
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	Enabled     bool   `json:"enabled"`
+	IsOwner     bool   `json:"is_owner"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 	LastLoginAt string `json:"last_login_at,omitempty"`
@@ -33,6 +34,7 @@ var (
 	ErrAdminUsernameTaken      = errors.New("administrator username is already in use")
 	ErrAdminUserNotFound       = errors.New("administrator user not found")
 	ErrAdminUserLastEnabled    = errors.New("cannot disable the last enabled administrator")
+	ErrAdminOwnerProtected     = errors.New("cannot modify the owner administrator")
 )
 
 const (
@@ -58,8 +60,20 @@ func (s *Store) migrateAdminUsers(ctx context.Context) error {
 		enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
-		last_login_at TEXT NOT NULL DEFAULT ''
+		last_login_at TEXT NOT NULL DEFAULT '',
+		is_owner INTEGER NOT NULL DEFAULT 0 CHECK(is_owner IN (0,1))
 	)`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "admin_users", "is_owner", "INTEGER NOT NULL DEFAULT 0 CHECK(is_owner IN (0,1))"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET is_owner=1
+		WHERE id=(SELECT id FROM admin_users ORDER BY CASE WHEN username='admin' THEN 0 ELSE 1 END, created_at, id LIMIT 1)
+		AND NOT EXISTS(SELECT 1 FROM admin_users WHERE is_owner=1)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS admin_users_owner_idx ON admin_users(is_owner) WHERE is_owner=1`); err != nil {
 		return err
 	}
 	var hash string
@@ -80,8 +94,8 @@ func (s *Store) migrateAdminUsers(ctx context.Context) error {
 	if _, costErr := bcrypt.Cost([]byte(hash)); costErr == nil {
 		timestamp := now()
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO admin_users
-			(id,username,password_hash,enabled,created_at,updated_at,last_login_at)
-			VALUES(?,?,?,1,?,?,?)`, legacyAdminID, "admin", hash, timestamp, timestamp, ""); err != nil {
+			(id,username,password_hash,enabled,created_at,updated_at,last_login_at,is_owner)
+			VALUES(?,?,?,1,?,?,?,1)`, legacyAdminID, "admin", hash, timestamp, timestamp, ""); err != nil {
 			return err
 		}
 	}
@@ -116,7 +130,7 @@ func (s *Store) BootstrapAdmin(ctx context.Context, password string) error {
 	}
 	timestamp := now()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO admin_users
-		(id,username,password_hash,enabled,created_at,updated_at,last_login_at)
-		VALUES(?,?,?,1,?,?,?)`, model.NewID(), "admin", string(hash), timestamp, timestamp, "")
+		(id,username,password_hash,enabled,created_at,updated_at,last_login_at,is_owner)
+		VALUES(?,?,?,1,?,?,?,1)`, model.NewID(), "admin", string(hash), timestamp, timestamp, "")
 	return err
 }

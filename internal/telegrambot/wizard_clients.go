@@ -122,9 +122,9 @@ func clientKeyboard(state *wizardState) *InlineKeyboardMarkup {
 	rows := make([][]InlineKeyboardButton, 0, clientPageSize+4)
 	for index := start; index < end; index++ {
 		client := state.clients[index]
-		mark := "○"
+		mark := "□"
 		if state.selectedClients[client.ID] {
-			mark = "✓"
+			mark = "🟩"
 		}
 		name := sanitizeTelegramLabel(client.Name, 32)
 		if name == "" {

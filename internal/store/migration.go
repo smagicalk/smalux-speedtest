@@ -111,6 +111,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "tasks", "threads", "INTEGER NOT NULL DEFAULT 4"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "clients", "owner_admin_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// 任务的代理配置只存在内存中，进程重启后不可能可靠恢复 queued/running 任务。
 	// 先终结这些任务的活动目标，再更新父任务，避免详情页在重启后仍显示
 	// queued/running Client。迁移在服务开放请求前执行，此时不存在并发读写。

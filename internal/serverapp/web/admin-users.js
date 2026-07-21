@@ -4,6 +4,7 @@ import { $, escapeHTML, showToast } from './ui.js';
 // controller separate prevents Dashboard task/client polling from accumulating
 // account-management details and gives all mutations one refresh boundary.
 export function initAdminUsers({api, dateText}) {
+  if (document.querySelector('meta[name="current-admin-owner"]')?.content !== 'true') return {load: async () => []};
   const currentAdminID = document.querySelector('meta[name="current-admin-id"]').content;
   let admins = [];
   let loadInFlight = null;
@@ -13,7 +14,7 @@ export function initAdminUsers({api, dateText}) {
       const current = item.id === currentAdminID;
       return `<tr>
         <td><span class="status ${item.enabled ? 'online' : ''}">${item.enabled ? '启用' : '停用'}</span></td>
-        <td><strong>${escapeHTML(item.username)}</strong>${current ? ' <span class="tag">当前</span>' : ''}</td>
+        <td><strong>${escapeHTML(item.username)}</strong>${item.is_owner ? ' <span class="tag owner">最高权限</span>' : (current ? ' <span class="tag">当前</span>' : '')}</td>
         <td>${dateText(item.last_login_at)}</td>
         <td>${dateText(item.created_at)}</td>
         <td><div class="row-actions">
@@ -47,6 +48,7 @@ export function initAdminUsers({api, dateText}) {
   $('#new-admin').addEventListener('click', () => {
     $('#admin-error').classList.add('hidden');
     $('#admin-dialog').showModal();
+    $('#admin-form input[name="username"]').focus();
   });
   document.querySelectorAll('.close-admin').forEach(button => button.addEventListener('click', () => $('#admin-dialog').close()));
 
