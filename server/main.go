@@ -34,6 +34,7 @@ func main() {
 	// Bot Token 刻意只从环境变量读取，避免明文秘密出现在进程命令行和进程列表中。
 	telegramOwnerID := flag.Int64("telegram-owner-id", envInt64("SMALUX_TELEGRAM_OWNER_ID", 0), "Telegram owner numeric user ID")
 	telegramAPIBaseURL := flag.String("telegram-api-base-url", env("SMALUX_TELEGRAM_API_BASE_URL", ""), "Telegram Bot API base URL (optional)")
+	allowInsecureWS := flag.Bool("allow-insecure-ws", envBool("SMALUX_ALLOW_INSECURE_WS", false), "allow remote plaintext ws:// client connections")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
@@ -43,6 +44,7 @@ func main() {
 	application, err := serverapp.New(ctx, serverapp.Config{
 		Listen: *listen, DatabasePath: *database, AdminPassword: os.Getenv("SMALUX_ADMIN_PASSWORD"), Logger: logger,
 		TelegramBotToken: os.Getenv("SMALUX_TELEGRAM_BOT_TOKEN"), TelegramOwnerID: *telegramOwnerID, TelegramAPIBaseURL: *telegramAPIBaseURL,
+		AllowInsecureClientWebSocket: *allowInsecureWS,
 	})
 	if err != nil {
 		logger.Error("initialize server", "error_type", logsafe.ErrorType(err))
@@ -101,6 +103,19 @@ func envInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// envBool 接受 strconv 支持的常见布尔文本；缺失或无效值使用 fallback。
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

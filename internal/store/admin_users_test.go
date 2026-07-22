@@ -106,6 +106,74 @@ func TestAdminUsersLifecycleAndLastEnabledInvariant(t *testing.T) {
 	}
 }
 
+func TestAdminInviteRegistrationLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin-invites.db")
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.BootstrapAdmin(t.Context(), "initial-password"); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := database.AuthenticateAdmin(t.Context(), "admin", "initial-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invite, code, err := database.CreateAdminInvite(t.Context(), owner.ID)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if invite.ID == "" || code == "" || strings.Contains(code, ".") {
+		t.Fatalf("invite/code shape = %+v %q", invite, code)
+	}
+	invites, err := database.ListAdminInvites(t.Context())
+	if err != nil || len(invites) != 1 || invites[0].UsedAt != "" || invites[0].RevokedAt != "" {
+		t.Fatalf("invites after create = %+v, %v", invites, err)
+	}
+
+	operator, err := database.RegisterAdminWithInvite(t.Context(), code, "Operator", "operator-password")
+	if err != nil || operator.Username != "operator" || operator.IsOwner {
+		t.Fatalf("register with invite = %+v, %v", operator, err)
+	}
+	if _, err := database.AuthenticateAdmin(t.Context(), "operator", "operator-password"); err != nil {
+		t.Fatalf("registered administrator cannot log in: %v", err)
+	}
+	if _, err := database.RegisterAdminWithInvite(t.Context(), code, "second", "second-password"); !errors.Is(err, ErrInvalidAdminInvite) {
+		t.Fatalf("reuse invite error = %v", err)
+	}
+	invites, err = database.ListAdminInvites(t.Context())
+	if err != nil || len(invites) != 1 || invites[0].UsedAt == "" || invites[0].UsedByAdminID != operator.ID {
+		t.Fatalf("invites after use = %+v, %v", invites, err)
+	}
+
+	_, duplicateCode, err := database.CreateAdminInvite(t.Context(), owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.RegisterAdminWithInvite(t.Context(), duplicateCode, "operator", "another-password"); !errors.Is(err, ErrAdminUsernameTaken) {
+		t.Fatalf("duplicate username registration error = %v", err)
+	}
+	if _, err := database.RegisterAdminWithInvite(t.Context(), duplicateCode, "backup", "backup-password"); err != nil {
+		t.Fatalf("invite was consumed by failed duplicate registration: %v", err)
+	}
+
+	revoked, revokedCode, err := database.CreateAdminInvite(t.Context(), owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RevokeAdminInvite(t.Context(), revoked.ID); err != nil {
+		t.Fatalf("revoke invite: %v", err)
+	}
+	if _, err := database.RegisterAdminWithInvite(t.Context(), revokedCode, "late", "late-password"); !errors.Is(err, ErrInvalidAdminInvite) {
+		t.Fatalf("revoked invite registration error = %v", err)
+	}
+	if err := database.RevokeAdminInvite(t.Context(), revoked.ID); !errors.Is(err, ErrInvalidAdminInvite) {
+		t.Fatalf("double revoke error = %v", err)
+	}
+}
+
 func TestLegacyAdminHashMigratesOnceAndIsRemoved(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-admin.db")
 	legacy, err := sql.Open("sqlite", path)

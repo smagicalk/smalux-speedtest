@@ -17,6 +17,7 @@
     <div class="top-actions">
       <span id="sync-status" class="sync-status" aria-live="polite">等待同步</span>
       <button id="refresh" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
+      {{if .IsOwner}}<a class="quiet button-link compact" href="/settings">设置</a>{{end}}
       <span class="account-chip" title="当前管理员">{{.Username}}</span>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
     </div>
@@ -44,20 +45,6 @@
         </table>
       </div>
     </section>
-
-    <!-- 管理员账户与 Client 凭据分开管理；当前账户和最后一个启用账户受后端保护。 -->
-    {{if .IsOwner}}<section class="section" id="admins-section">
-      <div class="section-heading">
-        <div><h2>管理员账户</h2><p>控制台登录与访问状态</p></div>
-        <button id="new-admin" class="primary" type="button">添加管理员</button>
-      </div>
-      <div class="table-wrap">
-        <table class="admin-table">
-          <thead><tr><th>状态</th><th>用户名</th><th>最近登录</th><th>创建时间</th><th></th></tr></thead>
-          <tbody id="admins-body"><tr><td colspan="5" class="empty">正在加载</td></tr></tbody>
-        </table>
-      </div>
-    </section>{{end}}
 
     <!-- 代理正文不会持久化；创建成功后仅通过 WebSocket 下发给选中的 Client。 -->
     <section class="section task-builder">
@@ -107,17 +94,6 @@
     </form>
   </dialog>
 
-  <dialog id="admin-dialog">
-    <form id="admin-form">
-      <div class="dialog-heading"><h2>添加管理员</h2><button class="icon-button close-admin" type="button" title="关闭" aria-label="关闭">×</button></div>
-      <label class="field"><span>用户名</span><input name="username" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" required></label>
-      <label class="field"><span>密码</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
-      <label class="field"><span>确认密码</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
-      <div id="admin-error" class="alert error hidden" role="alert"></div>
-      <div class="form-actions"><button class="quiet close-admin" type="button">取消</button><button class="primary" type="submit">创建</button></div>
-    </form>
-  </dialog>
-
   <dialog id="edit-client-dialog">
     <form id="edit-client-form">
       <div class="dialog-heading"><h2>编辑测速节点</h2><button class="icon-button close-edit-client" type="button" title="关闭" aria-label="关闭">×</button></div>
@@ -130,9 +106,10 @@
   </dialog>
 
   <dialog id="token-dialog">
-    <div class="dialog-heading"><h2>Client Token</h2><button class="icon-button close-token" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <div class="dialog-heading"><h2>Client 接入信息</h2><button class="icon-button close-token" type="button" title="关闭" aria-label="关闭">×</button></div>
     <label class="field"><span>Token</span><textarea id="client-token" rows="3" readonly></textarea></label>
-    <div class="form-actions"><button id="copy-token" class="primary" type="button">复制 Token</button></div>
+    <label class="field command-field"><span>Windows 运行命令</span><textarea id="client-command" rows="4" readonly></textarea></label>
+    <div class="form-actions"><button id="copy-token" class="quiet" type="button">复制 Token</button><button id="copy-client-command" class="primary" type="button">复制运行命令</button></div>
   </dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="/static/dashboard.js"></script>

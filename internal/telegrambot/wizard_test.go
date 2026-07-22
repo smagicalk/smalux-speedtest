@@ -99,7 +99,7 @@ func TestWizardClientPaginationAndSelection(t *testing.T) {
 		t.Fatal("client pagination did not advance")
 	}
 	callback("clear", "client-none")
-	if got := clientKeyboard(bot.loadWizard(1)).InlineKeyboard[0][0].Text; !strings.HasPrefix(got, "□ ") {
+	if got := clientKeyboard(bot.loadWizard(1)).InlineKeyboard[0][0].Text; !strings.HasPrefix(got, "⬜ ") {
 		t.Fatalf("unselected client marker = %q", got)
 	}
 	callback("empty-next", "client-next")

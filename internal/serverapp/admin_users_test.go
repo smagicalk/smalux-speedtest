@@ -101,6 +101,78 @@ func TestAdminUserManagementAndSessionRevocation(t *testing.T) {
 	}
 }
 
+func TestAdminInviteRegistrationFlow(t *testing.T) {
+	application, err := New(t.Context(), Config{
+		Listen: ":0", DatabasePath: filepath.Join(t.TempDir(), "admin-invite-api.db"), AdminPassword: "initial-password",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.store.Close()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("local sockets are unavailable: %v", err)
+	}
+	server := httptest.NewUnstartedServer(application.routes())
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	ownerClient, ownerCSRF := loginAdminForTest(t, server.URL, "admin", "initial-password")
+	created := doAdminJSON(t, ownerClient, ownerCSRF, http.MethodPost, server.URL+"/api/admin-invites", nil)
+	if created.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(created.Body)
+		created.Body.Close()
+		t.Fatalf("create invite returned %d: %s", created.StatusCode, body)
+	}
+	var payload struct {
+		Invite store.AdminInvite `json:"invite"`
+		Code   string            `json:"code"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&payload); err != nil {
+		created.Body.Close()
+		t.Fatal(err)
+	}
+	created.Body.Close()
+	if payload.Invite.ID == "" || payload.Code == "" {
+		t.Fatalf("invite response = %+v", payload)
+	}
+
+	operatorClient, operatorCSRF := registerAdminForTest(t, server.URL, payload.Code, "operator", "operator-password")
+	response, err := operatorClient.Get(server.URL + "/api/admin-users")
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("registered ordinary admin owner API access = %v, %v", response, err)
+	}
+	response.Body.Close()
+	if operatorCSRF == "" {
+		t.Fatal("registered administrator CSRF missing")
+	}
+
+	reuse := registerAdminResponse(t, server.URL, payload.Code, "second", "second-password")
+	body, _ := io.ReadAll(reuse.Body)
+	reuse.Body.Close()
+	if reuse.StatusCode != http.StatusBadRequest || !bytes.Contains(body, []byte("邀请码无效或已使用")) {
+		t.Fatalf("reuse invite returned %d: %s", reuse.StatusCode, body)
+	}
+
+	list := doAdminJSON(t, ownerClient, ownerCSRF, http.MethodGet, server.URL+"/api/admin-invites", nil)
+	if list.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(list.Body)
+		list.Body.Close()
+		t.Fatalf("list invites returned %d: %s", list.StatusCode, body)
+	}
+	var invites []store.AdminInvite
+	if err := json.NewDecoder(list.Body).Decode(&invites); err != nil {
+		list.Body.Close()
+		t.Fatal(err)
+	}
+	list.Body.Close()
+	if len(invites) != 1 || invites[0].UsedAt == "" {
+		t.Fatalf("invites after registration = %+v", invites)
+	}
+}
+
 func loginAdminForTest(t *testing.T, baseURL, username, password string) (*http.Client, string) {
 	t.Helper()
 	jar, _ := cookiejar.New(nil)
@@ -119,6 +191,47 @@ func loginAdminForTest(t *testing.T, baseURL, username, password string) (*http.
 		t.Fatalf("CSRF token missing after login %q: %s", username, body)
 	}
 	return client, string(match[1])
+}
+
+func registerAdminForTest(t *testing.T, baseURL, inviteCode, username, password string) (*http.Client, string) {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	response, err := client.PostForm(baseURL+"/register", url.Values{
+		"invite_code":      {inviteCode},
+		"username":         {username},
+		"password":         {password},
+		"password_confirm": {password},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("register %q returned %d: %s", username, response.StatusCode, body)
+	}
+	match := regexp.MustCompile(`name="csrf-token" content="([^"]+)"`).FindSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("CSRF token missing after register %q: %s", username, body)
+	}
+	return client, string(match[1])
+}
+
+func registerAdminResponse(t *testing.T, baseURL, inviteCode, username, password string) *http.Response {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	response, err := client.PostForm(baseURL+"/register", url.Values{
+		"invite_code":      {inviteCode},
+		"username":         {username},
+		"password":         {password},
+		"password_confirm": {password},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }
 
 func doAdminJSON(t *testing.T, client *http.Client, csrf, method, endpoint string, value any) *http.Response {

@@ -39,6 +39,11 @@ func (c *connection) send(ctx context.Context, message wire.Envelope) error {
 	return wsjson.Write(ctx, c.ws, message)
 }
 
+// receive 是业务消息的唯一读取入口。
+func (c *connection) receive(ctx context.Context, message *wire.Envelope) error {
+	return wsjson.Read(ctx, c.ws, message)
+}
+
 // setCurrent 发布当前任务及其取消函数，使读取循环收到 task.cancel 时能够中断 worker。
 func (c *connection) setCurrent(taskID string, cancel context.CancelFunc) {
 	c.current.Lock()

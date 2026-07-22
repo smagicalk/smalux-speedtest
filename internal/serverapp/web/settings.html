@@ -1,0 +1,96 @@
+{{define "settings.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{.CSRF}}">
+  <meta name="current-admin-id" content="{{.CurrentAdminID}}">
+  <meta name="current-admin-owner" content="{{.IsOwner}}">
+  <title>系统设置 · Smalux Speedtest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
+    <div class="top-actions">
+      <a class="quiet button-link compact" href="/">返回控制台</a>
+      <span class="account-chip" title="当前管理员">{{.Username}}</span>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
+    </div>
+  </header>
+
+  <main class="workspace settings-workspace">
+    <section class="section" id="telegram-section">
+      <div class="section-heading">
+        <div><h1>Telegram Bot</h1><p>绑定状态与运行开关</p></div>
+        <span id="telegram-status" class="sync-status">读取中</span>
+      </div>
+
+      <div id="telegram-bound" class="settings-panel hidden">
+        <dl class="settings-details">
+          <div><dt>Bot</dt><dd id="telegram-bot">—</dd></div>
+          <div><dt>Owner ID</dt><dd id="telegram-owner" class="mono">—</dd></div>
+          <div><dt>运行状态</dt><dd id="telegram-runtime">—</dd></div>
+        </dl>
+        <div class="settings-actions">
+          <label class="switch-field"><input id="telegram-enabled" type="checkbox"><span>启用 Bot</span></label>
+          <button id="telegram-rebind" class="quiet" type="button">重新绑定</button>
+          <button id="telegram-unbind" class="danger" type="button">解除绑定</button>
+        </div>
+      </div>
+
+      <form id="telegram-bind-form" class="settings-form">
+        <div class="form-grid">
+          <label class="field"><span>Bot Token</span><input name="token" type="password" autocomplete="off" required></label>
+          <label class="field"><span>Telegram Owner ID</span><input name="owner_id" type="number" min="1" step="1" inputmode="numeric" required></label>
+        </div>
+        <div id="telegram-bind-error" class="alert error hidden" role="alert"></div>
+        <div class="form-actions"><button class="primary" type="submit">发送验证码</button></div>
+      </form>
+
+      <form id="telegram-confirm-form" class="settings-form hidden">
+        <div class="section-heading compact-heading"><div><h2>确认绑定</h2><p id="telegram-verify-target"></p></div></div>
+        <label class="field verification-field"><span>验证码</span><input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" required></label>
+        <div id="telegram-confirm-error" class="alert error hidden" role="alert"></div>
+        <div class="form-actions"><button id="telegram-cancel-verify" class="quiet" type="button">取消</button><button class="primary" type="submit">确认绑定</button></div>
+      </form>
+    </section>
+
+    <section class="section" id="admins-section">
+      <div class="section-heading">
+        <div><h2>管理员账户</h2><p>控制台登录与访问状态</p></div>
+        <button id="new-admin" class="primary" type="button">生成邀请</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>状态</th><th>用户名</th><th>最近登录</th><th>创建时间</th><th></th></tr></thead>
+          <tbody id="admins-body"><tr><td colspan="5" class="empty">正在加载</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="subsection-heading">
+        <div><h3>注册邀请</h3><p>邀请码生成后只显示一次，未使用前可吊销</p></div>
+        <span id="invite-count" class="field-meta">0 个邀请</span>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>状态</th><th>创建时间</th><th>使用时间</th><th></th></tr></thead>
+          <tbody id="invites-body"><tr><td colspan="4" class="empty">正在加载</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="invite-dialog">
+    <div class="dialog-heading"><h2>注册邀请</h2><button class="icon-button close-invite" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <label class="field"><span>邀请码</span><textarea id="invite-code-output" rows="3" readonly></textarea></label>
+    <label class="field command-field"><span>注册链接</span><textarea id="invite-link-output" rows="2" readonly></textarea></label>
+    <div id="invite-error" class="alert error hidden" role="alert"></div>
+    <div class="form-actions"><button class="quiet close-invite" type="button">关闭</button><button id="copy-invite-link" class="quiet" type="button">复制链接</button><button id="copy-invite" class="primary" type="button">复制邀请码</button></div>
+  </dialog>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/static/settings.js"></script>
+</body>
+</html>
+{{end}}

@@ -34,6 +34,10 @@ func (p *peer) send(ctx context.Context, envelope wire.Envelope) error {
 	return wsjson.Write(ctx, p.conn, envelope)
 }
 
+func (p *peer) receive(ctx context.Context, envelope *wire.Envelope) error {
+	return wsjson.Read(ctx, p.conn, envelope)
+}
+
 // Hub 协调 Client 长连接、运行中任务状态机和浏览器事件订阅。
 //
 // peers、tasks、subscribers 统一由 mu 保护。方法只应在锁内读取或修改这些 map 和
@@ -44,6 +48,8 @@ type Hub struct {
 	store *store.Store
 	// log 记录连接和调度诊断信息，不记录代理配置或 Client Token。
 	log *slog.Logger
+	// allowInsecureClientWebSocket 仅由显式启动配置开启，允许远程 ws:// Client。
+	allowInsecureClientWebSocket bool
 
 	// mu 保护 peers、tasks、subscribers 及 runtimeTask.targets。
 	mu sync.RWMutex
@@ -67,8 +73,8 @@ type Hub struct {
 }
 
 // NewHub 创建一个没有在线 Client、活动任务和 SSE 订阅者的 Hub。
-func NewHub(store *store.Store, logger *slog.Logger) *Hub {
-	return &Hub{
+func NewHub(store *store.Store, logger *slog.Logger, allowInsecure ...bool) *Hub {
+	hub := &Hub{
 		store:          store,
 		log:            logger,
 		peers:          make(map[string]*peer),
@@ -78,6 +84,10 @@ func NewHub(store *store.Store, logger *slog.Logger) *Hub {
 		connections:    make(map[*websocket.Conn]struct{}),
 		shutdown:       make(chan struct{}),
 	}
+	if len(allowInsecure) > 0 {
+		hub.allowInsecureClientWebSocket = allowInsecure[0]
+	}
+	return hub
 }
 
 // Online 报告指定 Client 是否在当前 Hub 中登记了完成握手的连接。
@@ -91,24 +101,21 @@ func (h *Hub) Online(clientID string) bool {
 
 // ServeWebSocket 完成 Client 认证、协议握手、连接登记和消息读取循环。
 //
-// 认证分两层：HTTP Upgrade 前用数据库中的 Client Bearer Token 验证身份；Upgrade 后首帧
-// 必须是版本匹配且名称非空的 client.hello。管理员 Session Cookie 不参与此端点认证。
+// Client 在 HTTP Upgrade 中发送 Bearer Token。管理员 Session 不参与 Client 认证。
 func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Assignment 包含完整代理凭据。只有真实 TLS 连接或同机回环连接才能接收它；
-	// 不能信任公网请求自行提供的 X-Forwarded-Proto。
-	if !secureClientWebSocketRequest(r) {
+	// Assignment 包含完整代理凭据。默认只有真实 TLS 连接或同机回环连接才能接收它；
+	// 运维显式开启明文模式时才跳过该限制。不能信任公网请求自行提供的 X-Forwarded-Proto。
+	if !h.allowInsecureClientWebSocket && !secureClientWebSocketRequest(r) {
 		http.Error(w, "secure websocket required", http.StatusUpgradeRequired)
 		return
 	}
-	// 在升级协议前拒绝无效或已撤销 Token，避免为未认证请求分配长连接资源。
-	token := bearerToken(r.Header.Get("Authorization"))
-	client, err := h.store.AuthenticateClient(r.Context(), token)
+	client, err := h.store.AuthenticateClient(r.Context(), bearerToken(r.Header.Get("Authorization")))
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// Client 是非浏览器 Agent，Origin 不是认证凭据，因此允许任意 Origin；安全性来自
-	// Authorization Bearer Token。若未来允许浏览器 Client，应重新收紧此策略。
+	// Bearer Token。未来允许浏览器 Client 时应重新收紧。
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
 		return
@@ -123,11 +130,12 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 	// Client 上报的结果和进度无需承载批量代理，使用较小的协议方向上限。
 	conn.SetReadLimit(wire.MaxClientToServerMessageBytes)
+	connected := &peer{client: client, conn: conn}
 
 	// 要求 Client 在 10 秒内发送首个 hello，防止只完成 Upgrade 却不握手的空闲连接。
 	helloCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	var first wire.Envelope
-	err = wsjson.Read(helloCtx, conn, &first)
+	err = connected.receive(helloCtx, &first)
 	cancel()
 	if err != nil || first.Version != model.ProtocolVersion || first.Type != wire.TypeHello {
 		conn.Close(websocket.StatusPolicyViolation, "client.hello required")
@@ -139,12 +147,11 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Store 只接受归一化后的版本和平台。管理员创建的 Name/Labels 始终权威，远端
-	// Hello 即使持有合法 Bearer Token 也不能用分享链接或 outbound 覆盖它们。
+	// Hello 即使完成 Token 认证也不能用分享链接或 outbound 覆盖管理员维护字段。
 	if err := h.store.UpdateClientHello(r.Context(), client.ID, hello); err != nil {
 		conn.Close(websocket.StatusInternalError, "failed to register client")
 		return
 	}
-	connected := &peer{client: client, conn: conn}
 	// welcome 必须是服务端首帧。写入成功前不把 peer 暴露给 Hub，否则并发
 	// AddTask 可能抢先发出 task.assign，使 Client 把正常连接判定为协议错误。
 	welcome, _ := wire.New(wire.TypeWelcome, "", model.Welcome{ClientID: client.ID})
@@ -169,7 +176,7 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 每条连接只有此 goroutine 读取；消息写入则统一通过 peer.send 串行化。
 	for {
 		var message wire.Envelope
-		if err := wsjson.Read(r.Context(), conn, &message); err != nil {
+		if err := connected.receive(r.Context(), &message); err != nil {
 			return
 		}
 		// 忽略不兼容版本的后续消息，避免按错误载荷语义更新任务状态。

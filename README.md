@@ -31,18 +31,11 @@ Task candidate count, Top N, and thread count use bounded dashboard selectors. E
 
 ## Telegram Bot (optional)
 
-Create a bot with BotFather, keep its token out of the command line, and start the server with the numeric Telegram user ID that will own authorization management:
+Create a bot with BotFather, open **System settings** as the highest-privilege web administrator, and bind it with the Bot Token and numeric Telegram owner ID. The server validates the token with `getMe`, sends a six-digit code through that Bot, and saves the binding only after the code is confirmed in the web page. Send `/start` to the new Bot before requesting the code.
 
-```bash
-SMALUX_ADMIN_PASSWORD='change-this-password' \
-SMALUX_TELEGRAM_BOT_TOKEN='123456:bot-token' \
-go run ./server \
-  -listen 127.0.0.1:8080 \
-  -db smalux-speedtest.db \
-  -telegram-owner-id 123456789
-```
+The settings page starts, stops, rebinds, and removes the Bot without restarting the Server. Only the unique highest-privilege administrator can access these controls. The Token is encrypted in SQLite with a randomly generated local key stored beside the database with owner-only permissions; neither the Token nor key is returned to the browser or written to logs. Back up the database and its `.bot-key` file together. If the key is missing or invalid, the speedtest service still starts and the settings page allows the Owner to bind the Bot again.
 
-Both the token and owner ID must be configured, otherwise the server refuses to start. The owner is synchronized into SQLite on every start and is the only user allowed to change the Bot authorization list. The Bot processes private text chats only.
+The Telegram owner is synchronized into SQLite when the binding is confirmed and is the only Telegram user allowed to change the Bot authorization list. The Bot processes private text chats only. Legacy `SMALUX_TELEGRAM_BOT_TOKEN` plus `-telegram-owner-id` startup configuration remains available for existing deployments, but is not needed for a web-managed Bot.
 
 | Command | Access | Purpose |
 | --- | --- | --- |
@@ -70,14 +63,14 @@ The server uses an embedded portable font for reports. Set `SMALUX_REPORT_FONT` 
 
 ```bash
 SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' go run -tags with_utls ./client \
-  -server ws://127.0.0.1:8080/ws/client \
-  -name shanghai-01 \
-  -labels region=cn-east,provider=example
+  -server ws://127.0.0.1:8080/ws/client
 ```
 
 `SMALUX_CLIENT_TOKEN` is the preferred token source and takes precedence when it is non-empty. The `-token` flag remains only as a compatibility fallback; command-line secrets may be visible in process listings and should not be used for new deployments.
 
-For production, terminate TLS at a same-host reverse proxy and configure clients with a `wss://` URL. Both sides reject remote plaintext WebSocket: the Client accepts `ws://` only for `localhost` or literal loopback IP addresses, and the Server upgrades a non-TLS connection only when its direct peer is loopback. A reverse proxy on another host must use a TLS or loopback tunnel for its backend connection.
+The Client only needs the Server WebSocket URL and its one-time token. Its display name and labels are maintained in the Server dashboard; task candidate count, transfer-server selection, and thread count are sent with each assignment.
+
+The Server rejects remote plaintext `ws://` Clients by default. For temporary use on a trusted network, start it with `-allow-insecure-ws`; the Client will then authenticate with its Bearer Token over plaintext WebSocket. Public deployments must use WSS because plain WS exposes the Token, assignments, results, packet sizes, timing, and endpoint addresses to the network path.
 
 Supported URI families are Shadowsocks, VMess, VLESS, Trojan, SOCKS5, HTTP, SSH, AnyTLS, Hysteria, Hysteria2 and TUIC. Naive is intentionally excluded because sing-box embeds large per-platform Cronet libraries for that outbound.
 
@@ -89,7 +82,9 @@ Historical results retain an ordinary user-provided node display name, protocol,
 
 Logs omit proxy configuration, request bodies, subscription URLs, raw connection errors, client names, remote client addresses, listener addresses, and local database paths. Existing databases are scrubbed once on upgrade: normal node names remain, sensitive-looking names become anonymous protocol labels, and old address fragments, invalid timestamps, untrusted Speedtest metadata, and arbitrary task/result errors are removed. The legacy single-admin hash is migrated into the administrator table and its duplicate setting is deleted. The upgrade then rewrites SQLite and truncates its WAL to purge obsolete local pages; separately managed backups are outside this process.
 
-The complete outbound must still travel from Server to an authorized Client. Public deployments must use HTTPS/WSS and protect administrator and Client credentials. Proxy links sent to the optional Telegram Bot also remain subject to Telegram's own message-retention policy; use the authenticated web interface when that is unsuitable.
+The complete outbound must still travel from Server to an authorized Client. Public deployments should use HTTPS/WSS and separately protect the administrator web interface. Proxy links sent to the optional Telegram Bot also remain subject to Telegram's own message-retention policy; use the authenticated web interface when that is unsuitable.
+
+For temporary trusted-network testing only, start the Server with `-allow-insecure-ws` (or `SMALUX_ALLOW_INSECURE_WS=true`) to accept remote `ws://` Clients. This sends the Client Token and all task traffic without transport encryption. Never enable it across an untrusted or public network; use WSS instead.
 
 ## Release builds
 

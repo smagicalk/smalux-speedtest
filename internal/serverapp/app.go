@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"smalux-speedtest/internal/store"
@@ -26,13 +27,19 @@ type Config struct {
 	DatabasePath string
 	// AdminPassword 只在数据库尚未初始化管理员密码时用于引导创建管理员。
 	AdminPassword string
-	// TelegramBotToken 是 BotFather 签发的令牌。为空时 Telegram Bot 完全禁用。
+	// TelegramBotToken 仅用于兼容旧部署的首次启动注入。新部署应由 Owner
+	// 管理员在系统设置页完成验证绑定，避免把 Token 放入启动命令。
 	TelegramBotToken string
 	// TelegramOwnerID 是启动时指定的唯一最高权限 Telegram 用户数字 ID。
 	// 启用 Bot 时必须为正数，数据库中的 owner 会以该值为准幂等同步。
 	TelegramOwnerID int64
 	// TelegramAPIBaseURL 用于测试或自建 Bot API Server；远程地址必须使用 HTTPS。
 	TelegramAPIBaseURL string
+	// TelegramHTTPClient 仅用于测试或定制 Transport；生产启动入口保持 nil。
+	TelegramHTTPClient *http.Client
+	// AllowInsecureClientWebSocket 显式允许远程 Client 使用 ws://。默认关闭；该模式下
+	// Token 和 Assignment 均未加密，只应在受信网络临时使用。
+	AllowInsecureClientWebSocket bool
 	// Logger 接收 HTTP、连接与调度日志；为 nil 时使用 slog.Default。
 	Logger *slog.Logger
 }
@@ -51,8 +58,14 @@ type App struct {
 	template *template.Template
 	// sessions 是仅驻留内存的管理员登录会话表；进程重启后全部失效。
 	sessions *sessionStore
-	// telegram 为可选 Bot 后台任务；未配置 Token 和 Owner ID 时保持 nil。
+	// telegram 为网页可动态启停的可选 Bot 后台任务；未绑定或关闭时保持 nil。
 	telegram *telegramRuntime
+	// telegramMu 保护运行时替换、本机加密密钥和网页绑定挑战。
+	telegramMu       sync.Mutex
+	telegramParent   context.Context
+	telegramKey      [32]byte
+	telegramKeyReady bool
+	telegramBindings map[string]*telegramBindingChallenge
 	// server 是实际提供路由的标准库 HTTP Server。
 	server *http.Server
 }
@@ -79,9 +92,12 @@ func New(ctx context.Context, config Config) (*App, error) {
 	}
 	app := &App{
 		config: config, store: database, fetcher: subscription.NewFetcher(), template: templates,
-		sessions: newSessionStore(),
+		sessions: newSessionStore(), telegramBindings: make(map[string]*telegramBindingChallenge),
 	}
-	app.hub = NewHub(database, config.Logger)
+	app.hub = NewHub(database, config.Logger, config.AllowInsecureClientWebSocket)
+	if config.AllowInsecureClientWebSocket {
+		config.Logger.Warn("insecure remote client websocket enabled")
+	}
 	app.server = &http.Server{
 		Addr:     config.Listen,
 		Handler:  app.routes(),
@@ -91,7 +107,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	if err := app.startTelegram(ctx); err != nil {
+	if err := app.initializeTelegram(ctx); err != nil {
 		database.Close()
 		return nil, err
 	}
@@ -130,18 +146,26 @@ func (a *App) Shutdown(ctx context.Context) error {
 // routes 构建服务端完整路由表，并在最外层统一记录请求日志。
 //
 // 管理页面和 API 使用内存 Session Cookie；所有会修改状态的管理接口还必须通过 CSRF
-// 校验。Client WebSocket 不使用管理员会话，而是在 Hub 中用独立的 Bearer Token 认证。
+// 校验。Client WebSocket 不使用管理员会话，而是在 Hub 中用 Bearer Token 认证。
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	staticFS, _ := fs.Sub(webFiles, "web")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	staticHandler := http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))
+	// 内嵌脚本包含当前服务端版本的交互逻辑；禁止缓存可避免升级后二次登录仍执行旧 JS。
+	mux.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		staticHandler.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.login)
+	mux.HandleFunc("GET /register", a.registerPage)
+	mux.HandleFunc("POST /register", a.register)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	// WebSocket 在升级前自行校验 Client Token，因此不套 requireAdmin。
+	// WebSocket 自行执行 Client Token 认证，因此不套 requireAdmin。
 	mux.HandleFunc("GET /ws/client", a.hub.ServeWebSocket)
 
 	mux.Handle("GET /", a.requireAdmin(http.HandlerFunc(a.dashboard)))
+	mux.Handle("GET /settings", a.requireAdmin(a.requireOwner(http.HandlerFunc(a.telegramSettingsPage))))
 	mux.Handle("GET /tasks/{id}", a.requireAdmin(http.HandlerFunc(a.taskPage)))
 	mux.Handle("POST /logout", a.requireAdmin(a.csrf(http.HandlerFunc(a.logout))))
 	mux.Handle("GET /api/clients", a.requireAdmin(http.HandlerFunc(a.listClients)))
@@ -152,6 +176,14 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/admin-users", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.createAdminUser)))))
 	mux.Handle("PATCH /api/admin-users/{id}", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.updateAdminUser)))))
 	mux.Handle("DELETE /api/admin-users/{id}", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.deleteAdminUser)))))
+	mux.Handle("GET /api/admin-invites", a.requireAdmin(a.requireOwner(http.HandlerFunc(a.listAdminInvites))))
+	mux.Handle("POST /api/admin-invites", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.createAdminInvite)))))
+	mux.Handle("DELETE /api/admin-invites/{id}", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.revokeAdminInvite)))))
+	mux.Handle("GET /api/settings/telegram", a.requireAdmin(a.requireOwner(http.HandlerFunc(a.getTelegramSettings))))
+	mux.Handle("POST /api/settings/telegram/verify", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.beginTelegramBinding)))))
+	mux.Handle("POST /api/settings/telegram/confirm", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.confirmTelegramBinding)))))
+	mux.Handle("PATCH /api/settings/telegram", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.updateTelegramSettings)))))
+	mux.Handle("DELETE /api/settings/telegram", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.deleteTelegramSettings)))))
 	mux.Handle("GET /api/tasks", a.requireAdmin(http.HandlerFunc(a.listTasks)))
 	mux.Handle("POST /api/tasks", a.requireAdmin(a.csrf(http.HandlerFunc(a.createTask))))
 	mux.Handle("GET /api/tasks/{id}", a.requireAdmin(http.HandlerFunc(a.getTask)))

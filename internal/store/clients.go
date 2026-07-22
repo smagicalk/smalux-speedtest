@@ -24,14 +24,15 @@ func (s *Store) CreateClientForAdmin(ctx context.Context, name string, labels ma
 	if strings.TrimSpace(name) == "" {
 		return Client{}, "", errors.New("client name is required")
 	}
-	token, err := randomToken(32)
-	if err != nil {
-		return Client{}, "", err
-	}
 	client := Client{
 		ID: model.NewID(), OwnerAdminID: strings.TrimSpace(ownerAdminID), Name: model.NormalizeClientName(name), Labels: model.NormalizeClientLabels(labels),
 		Enabled: true, CreatedAt: now(),
 	}
+	secret, err := randomToken(32)
+	if err != nil {
+		return Client{}, "", err
+	}
+	token := secret
 	labelsJSON, _ := json.Marshal(client.Labels)
 	_, err = s.db.ExecContext(ctx, `INSERT INTO clients(id,owner_admin_id,name,token_hash,labels_json,created_at) VALUES(?,?,?,?,?,?)`,
 		client.ID, client.OwnerAdminID, client.Name, tokenHash(token), string(labelsJSON), client.CreatedAt)

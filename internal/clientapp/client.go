@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
@@ -24,7 +22,8 @@ import (
 type Config struct {
 	// ServerURL 是客户端控制面的 ws:// 或 wss:// 地址。
 	ServerURL string
-	// Token 作为 Bearer Token 放入 WebSocket HTTP Upgrade 请求，用于客户端认证。
+	// Token 作为 WebSocket Upgrade 的 Bearer 凭据发送。公网部署必须使用 WSS，
+	// 防止凭据和测速任务在传输途中暴露。
 	Token string
 	// Name 是展示和调度时使用的客户端名称，通常为部署机器的主机名或机房标识。
 	Name string
@@ -48,39 +47,28 @@ type Client struct {
 	executor *Executor
 }
 
-// New 校验客户端必填配置并创建执行端。远程控制面必须使用 wss://；ws:// 仅允许
-// 回环地址，供同机开发和 TLS 反向代理后的本地连接使用。Assignment 含完整代理凭据，
-// 不能依靠文档提示来防止远程明文传输。
+// New 校验客户端必填配置并创建执行端。服务端默认要求 WSS；当服务端显式开启
+// allow-insecure-ws 后，客户端也接受远程 ws://，以便在受控测试网络中使用。
+// Assignment 含完整代理凭据，生产环境仍应使用 WSS。
 func New(config Config) (*Client, error) {
 	config.ServerURL = strings.TrimSpace(config.ServerURL)
 	config.Token = strings.TrimSpace(config.Token)
 	config.Name = strings.TrimSpace(config.Name)
-	if config.ServerURL == "" || config.Token == "" || config.Name == "" {
-		return nil, errors.New("server URL, token and client name are required")
+	if config.ServerURL == "" || config.Token == "" {
+		return nil, errors.New("server URL and token are required")
+	}
+	if config.Name == "" {
+		config.Name = "smalux-client"
 	}
 	parsedURL, err := url.Parse(config.ServerURL)
 	if err != nil || (parsedURL.Scheme != "ws" && parsedURL.Scheme != "wss") || parsedURL.Host == "" ||
 		parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.ForceQuery || parsedURL.Fragment != "" {
 		return nil, errors.New("server URL must be an absolute ws:// or wss:// URL without credentials, query, or fragment")
 	}
-	if parsedURL.Scheme == "ws" && !isLoopbackHost(parsedURL.Hostname()) {
-		return nil, errors.New("remote server URL must use wss://")
-	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 	return &Client{config: config, executor: NewExecutor()}, nil
-}
-
-// isLoopbackHost 只接受字面回环 IP 和 localhost。
-// 不解析 DNS，避免攻击者控制的域名在校验时和连接时返回不同地址。
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // Run 持续维护到服务端的连接，直到 ctx 被取消。
@@ -124,7 +112,6 @@ func (c *Client) Run(ctx context.Context) error {
 // 发送 Ping。派生 context 在 connect 返回时统一取消，使后两个 goroutine 和当前测速
 // 不会跨越连接生命周期继续运行。
 func (c *Client) connect(parent context.Context) error {
-	// Token 放在 Upgrade 请求头中，避免作为查询参数出现在访问日志或代理日志中。
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+c.config.Token)
 	ctx, cancel := context.WithCancel(parent)
@@ -151,7 +138,7 @@ func (c *Client) connect(parent context.Context) error {
 	}
 	var welcome wire.Envelope
 	welcomeCtx, welcomeCancel := context.WithTimeout(ctx, 10*time.Second)
-	err = wsjson.Read(welcomeCtx, ws, &welcome)
+	err = connected.receive(welcomeCtx, &welcome)
 	welcomeCancel()
 	if err != nil || welcome.Type != wire.TypeWelcome || welcome.Version != model.ProtocolVersion {
 		return errors.New("server did not send a valid welcome message")
@@ -169,7 +156,7 @@ func (c *Client) connect(parent context.Context) error {
 	for {
 		var message wire.Envelope
 		// 当前 goroutine 是该连接唯一 reader；读失败通常意味着连接已经关闭。
-		if err := wsjson.Read(ctx, ws, &message); err != nil {
+		if err := connected.receive(ctx, &message); err != nil {
 			connected.cancelCurrent()
 			return err
 		}

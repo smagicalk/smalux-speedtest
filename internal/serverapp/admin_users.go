@@ -17,6 +17,11 @@ type updateAdminUserRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+type createAdminInviteResponse struct {
+	Invite store.AdminInvite `json:"invite"`
+	Code   string            `json:"code"`
+}
+
 // listAdminUsers 返回不含密码哈希的账户元数据。当前账户 ID 已由页面 meta
 // 提供，前端用它禁用自删除/自停用操作。
 func (a *App) listAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +31,36 @@ func (a *App) listAdminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
+}
+
+// listAdminInvites 返回邀请码状态列表。明文 code 不可恢复，因此不会出现在列表中。
+func (a *App) listAdminInvites(w http.ResponseWriter, r *http.Request) {
+	invites, err := a.store.ListAdminInvites(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, invites)
+}
+
+// createAdminInvite 生成一次性邀请码。code 只在本次 JSON 响应中出现，页面刷新后无法找回。
+func (a *App) createAdminInvite(w http.ResponseWriter, r *http.Request) {
+	session, _ := a.session(r)
+	invite, code, err := a.store.CreateAdminInvite(r.Context(), session.userID)
+	if err != nil {
+		writeAdminUserError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, createAdminInviteResponse{Invite: invite, Code: code})
+}
+
+// revokeAdminInvite 撤销尚未使用的邀请码。已使用的邀请码保留审计状态。
+func (a *App) revokeAdminInvite(w http.ResponseWriter, r *http.Request) {
+	if err := a.store.RevokeAdminInvite(r.Context(), r.PathValue("id")); err != nil {
+		writeAdminUserError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // createAdminUser 创建新的启用账户。请求体单独限制为 8 KiB，避免共用业务
@@ -108,6 +143,8 @@ func writeAdminUserError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, errors.New("管理员不存在"))
 	case errors.Is(err, store.ErrAdminOwnerProtected):
 		writeError(w, http.StatusConflict, errors.New("最高权限管理员不能停用或删除"))
+	case errors.Is(err, store.ErrInvalidAdminInvite):
+		writeError(w, http.StatusConflict, errors.New("邀请码无效、已使用或已吊销"))
 	default:
 		writeError(w, http.StatusInternalServerError, err)
 	}

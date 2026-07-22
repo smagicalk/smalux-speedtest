@@ -2,7 +2,7 @@
 //
 // 服务端同时面向两类调用方：
 //   - 管理员通过 HTML 页面和 JSON API 创建 Client、下发任务并查看结果；
-//   - 分布在各地的 Client 通过带 Bearer Token 的 WebSocket 长连接领取任务、
+//   - 分布在各地的 Client 通过 WebSocket 长连接领取任务、
 //     上报进度和测速结果。
 //
 // App 负责 HTTP 路由、管理员会话、CSRF 防护、订阅抓取和持久化入口；Hub

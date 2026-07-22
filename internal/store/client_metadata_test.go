@@ -34,11 +34,13 @@ func TestCreateClientNormalizesPublicMetadata(t *testing.T) {
 	if client.Name != "aws-sg-01" || !reflect.DeepEqual(client.Labels, wantLabels) {
 		t.Fatalf("CreateClient metadata = %+v, want name and labels %+v", client, wantLabels)
 	}
+	if strings.Contains(token, client.ID) {
+		t.Fatal("new Client token unexpectedly contains its public Client ID")
+	}
 	authenticated, err := database.AuthenticateClient(t.Context(), token)
 	if err != nil || authenticated.Name != client.Name || !reflect.DeepEqual(authenticated.Labels, wantLabels) {
 		t.Fatalf("authenticated Client metadata = %+v, %v", authenticated, err)
 	}
-
 	publicJSON, err := json.Marshal(map[string]any{"client": client, "token": token})
 	if err != nil {
 		t.Fatal(err)

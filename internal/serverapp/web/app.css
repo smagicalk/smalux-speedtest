@@ -1,13 +1,15 @@
 /* 全站设计令牌：颜色保持高对比、低装饰，适合持续查看测速数据的管理界面。 */
 :root {
   color-scheme: light;
-  --bg: #f5f7f8;
+  --bg: #edf3f2;
   --surface: #ffffff;
-  --text: #172126;
-  --muted: #66737a;
-  --line: #dce2e5;
-  --accent: #087f5b;
-  --accent-dark: #066647;
+  --surface-soft: #f8fbfa;
+  --text: #111c1f;
+  --muted: #5c6a70;
+  --line: #d4dfdd;
+  --accent: #0f766e;
+  --accent-dark: #0b5f59;
+  --accent-soft: #e1f4ef;
   --danger: #bd2c2c;
   --warning: #a76500;
   --info: #2663a3;
@@ -18,7 +20,7 @@
 
 /* 基础元素与按钮采用统一盒模型，防止边框和动态内容改变布局尺寸。 */
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); line-height: 1.45; }
 button, input, textarea, select { font: inherit; letter-spacing: 0; }
 button, .button-link { min-height: 38px; border: 1px solid transparent; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-weight: 650; }
 button:disabled { opacity: .55; cursor: not-allowed; }
@@ -26,9 +28,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 a { color: inherit; }
 
 /* 顶部导航固定在视口内，长表格滚动时仍可快速返回或刷新。 */
-.topbar { position: sticky; z-index: 10; top: 0; height: 58px; padding: 0 max(20px, calc((100vw - 1240px) / 2)); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); }
+.topbar { position: sticky; z-index: 10; top: 0; height: 64px; padding: 0 max(20px, calc((100vw - 1240px) / 2)); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,.94); border-bottom: 1px solid rgba(17,28,31,.08); box-shadow: 0 10px 30px rgba(17,28,31,.06); backdrop-filter: blur(12px); }
 .brand, .brand-block { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.brand-mark { display: inline-grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; background: var(--text); color: #fff; font-weight: 800; }
+.brand-mark { display: inline-grid; width: 32px; height: 32px; place-items: center; border-radius: 7px; background: var(--text); color: #fff; font-weight: 800; box-shadow: inset 0 -10px 18px rgba(255,255,255,.08); }
 .brand-block small { display: block; margin-top: 2px; color: var(--muted); }
 .top-actions, .task-actions, .form-actions { display: flex; align-items: center; gap: 8px; }
 .top-actions form { margin: 0; }
@@ -42,23 +44,25 @@ a { color: inherit; }
 @keyframes pulse { 50% { opacity: .35; } }
 
 /* 工作区使用无卡片的分段布局，概览和操作表格共享同一内容宽度。 */
-.workspace { width: min(1240px, calc(100% - 40px)); margin: 0 auto 72px; }
-.summary { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
-.summary div { padding: 24px 20px 22px 0; }
+.workspace { width: min(1240px, calc(100% - 40px)); margin: 18px auto 72px; }
+.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 6px; }
+.summary div { min-width: 0; padding: 18px 18px 16px; border: 1px solid rgba(17,28,31,.08); border-radius: 8px; background: linear-gradient(180deg, #fff, #f9fbfb); box-shadow: 0 12px 28px rgba(17,28,31,.05); }
 .summary span { display: block; color: var(--muted); font-size: .82rem; }
 .summary strong { display: block; margin-top: 6px; font-size: 1.7rem; line-height: 1; }
-.section { padding: 30px 0; border-bottom: 1px solid var(--line); }
+.section { padding: 30px 0; border-bottom: 1px solid rgba(17,28,31,.08); }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
-h1, h2 { margin: 0; line-height: 1.2; letter-spacing: 0; }
+h1, h2, h3 { margin: 0; line-height: 1.2; letter-spacing: 0; }
 h1 { font-size: 1.45rem; }
 h2 { font-size: 1.2rem; }
-.section-heading p { margin: 4px 0 0; color: var(--muted); font-size: .88rem; }
+h3 { font-size: 1.02rem; }
+.section-heading p, .subsection-heading p { margin: 4px 0 0; color: var(--muted); font-size: .88rem; }
+.subsection-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 24px 0 12px; }
 
 /* 数据表在窄屏保留列宽并横向滚动，避免测速字段被强行压缩或互相覆盖。 */
-.table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); border-radius: 7px; }
+.table-wrap { overflow-x: auto; border: 1px solid rgba(17,28,31,.09); background: var(--surface); border-radius: 8px; box-shadow: 0 14px 32px rgba(17,28,31,.05); }
 table { width: 100%; min-width: 760px; border-collapse: collapse; }
-th, td { height: 48px; padding: 9px 13px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
-th { color: var(--muted); background: #f9fafb; font-size: .76rem; font-weight: 700; text-transform: uppercase; }
+th, td { height: 50px; padding: 10px 14px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--muted); background: #f5f8f7; font-size: .76rem; font-weight: 750; text-transform: uppercase; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fafcfc; }
 .empty { height: 92px; color: var(--muted); text-align: center; }
@@ -68,11 +72,12 @@ tbody tr:hover { background: #fafcfc; }
 .status.running::before { background: var(--info); }
 .status.failed::before, .status.canceled::before { background: var(--danger); }
 .status.partial::before { background: var(--warning); }
-.tag { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; color: #445158; font-size: .76rem; }
+.tag { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-soft); color: #445158; font-size: .76rem; }
+.tag.owner { border-color: #d2b260; background: #fff8e0; color: #735300; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }
 
 /* 命令按钮按主操作、普通操作、危险操作区分语义，而非仅靠文字说明。 */
-.primary { background: var(--accent); color: #fff; }
+.primary { background: var(--accent); color: #fff; box-shadow: 0 8px 18px rgba(15,118,110,.18); }
 .primary:hover { background: var(--accent-dark); }
 .quiet, .button-link { border-color: var(--line); background: var(--surface); color: var(--text); text-decoration: none; }
 .quiet:hover, .button-link:hover { background: #edf1f2; }
@@ -82,6 +87,9 @@ tbody tr:hover { background: #fafcfc; }
 .full { width: 100%; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .row-actions button { min-height: 32px; padding: 5px 9px; font-size: .78rem; }
+.client-edit-trigger { display: inline-flex; min-height: 32px; align-items: center; gap: 7px; padding: 4px 6px; border: 0; background: transparent; color: var(--text); }
+.client-edit-trigger span { color: var(--accent); font-size: .74rem; font-weight: 700; }
+.client-edit-trigger:hover { background: #edf7f3; }
 .admin-table { min-width: 700px; }
 
 /* 创建任务表单在桌面端使用两列，长输入和订阅地址始终占满整行。 */
@@ -96,7 +104,7 @@ tbody tr:hover { background: #fafcfc; }
 .input-hint { color: var(--muted); font-size: .76rem; line-height: 1.4; }
 .field-tools .input-hint { flex: 1; }
 .compact { min-height: 32px; padding: 5px 9px; font-size: .78rem; }
-input, textarea, select { width: 100%; border: 1px solid #cbd3d7; border-radius: 6px; background: var(--surface); color: var(--text); padding: 9px 11px; outline: none; }
+input, textarea, select { width: 100%; border: 1px solid #c6d2d0; border-radius: 6px; background: var(--surface); color: var(--text); padding: 9px 11px; outline: none; }
 input, select { min-height: 40px; }
 textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(8,127,91,.12); }
@@ -115,6 +123,19 @@ legend { margin: 0; }
 .check-option.readonly { opacity: .68; cursor: default; }
 .check-option span { overflow: hidden; text-overflow: ellipsis; }
 .form-actions { justify-content: flex-end; margin-top: 18px; }
+.command-field { margin-top: 14px; }
+.settings-workspace { max-width: 1040px; }
+.settings-panel { display: grid; gap: 18px; }
+.settings-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--line); }
+.settings-details div { min-width: 0; padding: 16px 18px 16px 0; }
+.settings-details dt { color: var(--muted); font-size: .76rem; font-weight: 700; }
+.settings-details dd { margin: 5px 0 0; overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.switch-field { display: inline-flex; min-height: 38px; align-items: center; gap: 8px; margin-right: auto; font-size: .84rem; font-weight: 700; }
+.switch-field input { width: 18px; min-height: 18px; accent-color: var(--accent); }
+.settings-form { max-width: 720px; }
+.verification-field { max-width: 260px; }
+.compact-heading { margin-top: 4px; }
 .alert { margin: 14px 0 0; padding: 10px 12px; border-radius: 5px; }
 .alert.error { border: 1px solid #efc4c4; background: #fff3f3; color: #941f1f; }
 .hidden { display: none !important; }
@@ -138,18 +159,24 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 
 /* 登录页将品牌和表单分成稳定的全高区域，避免宽屏空旷、窄屏挤压。 */
-.login-page { min-height: 100vh; background: var(--surface); }
-.login-shell { display: grid; min-height: 100vh; grid-template-columns: minmax(300px, 38%) minmax(0, 1fr); }
-.login-brand-panel { display: flex; min-height: 100%; flex-direction: column; justify-content: space-between; padding: clamp(32px, 5vw, 72px); background: #172126; color: #fff; }
+.login-page { min-height: 100vh; background: #f6faf9; }
+.login-shell { display: grid; min-height: 100vh; grid-template-columns: minmax(320px, 40%) minmax(0, 1fr); }
+.login-brand-panel { display: flex; min-height: 100%; flex-direction: column; justify-content: space-between; padding: clamp(32px, 5vw, 72px); background: radial-gradient(circle at 20% 10%, rgba(126,214,186,.18), transparent 30%), linear-gradient(155deg, #102326 0%, #172126 54%, #253333 100%); color: #fff; }
 .login-brand .brand-mark { background: var(--accent); }
 .login-brand small { color: #b8c4c8; }
 .login-brand-copy { max-width: 430px; }
 .login-kicker { color: #7ed6ba; font-size: .76rem; font-weight: 750; }
-.login-brand-copy h1 { margin-top: 12px; font-size: 2rem; line-height: 1.22; }
+.login-brand-copy h1 { margin-top: 12px; font-size: 2.1rem; line-height: 1.2; }
+.login-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 28px; }
+.login-metrics span { min-height: 44px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(255,255,255,.06); color: #d6e1df; font-size: .78rem; font-weight: 750; }
 .login-system-state { display: inline-flex; align-items: center; gap: 8px; color: #c7d1d4; font-size: .8rem; }
-.login-system-state i { width: 8px; height: 8px; border-radius: 50%; background: #f0b44d; }
+.login-system-state i { width: 8px; height: 8px; border-radius: 50%; background: #7ed6ba; }
 .login-access { display: grid; place-items: center; padding: 40px; }
-.login-form { width: min(390px, 100%); }
+.auth-panel { width: min(430px, 100%); padding: 26px; border: 1px solid rgba(17,28,31,.1); border-radius: 8px; background: rgba(255,255,255,.94); box-shadow: 0 22px 60px rgba(17,28,31,.12); }
+.auth-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 24px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.auth-switch a { min-height: 36px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: .86rem; font-weight: 750; text-decoration: none; }
+.auth-switch a.active { background: var(--surface); color: var(--text); box-shadow: 0 6px 16px rgba(17,28,31,.08); }
+.login-form { width: 100%; }
 .login-form header { margin-bottom: 28px; }
 .login-form h2 { margin-top: 7px; font-size: 1.7rem; }
 .login-form label { display: block; margin-bottom: 7px; font-size: .82rem; font-weight: 700; }
@@ -192,6 +219,11 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
   .selection-toolbar, .field-tools { align-items: flex-start; flex-direction: column; }
   .selection-actions { width: 100%; }
   .selection-actions > * { flex: 1; }
+  .settings-details { grid-template-columns: 1fr; }
+  .settings-details div { border-bottom: 1px solid var(--line); }
+  .settings-details div:last-child { border-bottom: 0; }
+  .settings-actions { align-items: stretch; flex-direction: column; }
+  .settings-actions > *, .switch-field { width: 100%; margin-right: 0; }
   .top-actions { max-width: none; flex: 0 1 auto; }
   .top-actions .sync-status { overflow: hidden; text-overflow: ellipsis; }
   .account-chip { max-width: 110px; }
@@ -207,5 +239,6 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
   .login-shell { grid-template-columns: 1fr; grid-template-rows: 150px minmax(0, 1fr); }
   .login-brand-panel { min-height: 150px; padding: 24px; }
   .login-brand-copy { display: none; }
-  .login-access { align-items: start; padding: 40px 24px; }
+  .login-access { align-items: start; padding: 32px 20px; }
+  .auth-panel { padding: 20px; }
 }

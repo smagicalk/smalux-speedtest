@@ -49,3 +49,20 @@ func TestServeWebSocketRequiresTLSForRemotePeers(t *testing.T) {
 		})
 	}
 }
+
+func TestServeWebSocketAllowsExplicitRemotePlaintext(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "insecure-transport.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	hub := NewHub(database, slog.New(slog.NewTextHandler(io.Discard, nil)), true)
+	request := httptest.NewRequest(http.MethodGet, "http://server.test/ws/client", nil)
+	request.RemoteAddr = "198.51.100.10:1234"
+	request.Header.Set("Authorization", "Bearer invalid-token")
+	response := httptest.NewRecorder()
+	hub.ServeWebSocket(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d after explicit insecure opt-in", response.Code, http.StatusUnauthorized)
+	}
+}

@@ -1,4 +1,4 @@
-import { $, escapeHTML, showToast } from './ui.js';
+import { $, copyText, escapeHTML, showToast } from './ui.js';
 
 // initAdminUsers owns the administrator table and dialog state. Keeping this
 // controller separate prevents Dashboard task/client polling from accumulating
@@ -7,7 +7,11 @@ export function initAdminUsers({api, dateText}) {
   if (document.querySelector('meta[name="current-admin-owner"]')?.content !== 'true') return {load: async () => []};
   const currentAdminID = document.querySelector('meta[name="current-admin-id"]').content;
   let admins = [];
+  let invites = [];
   let loadInFlight = null;
+  let invitesLoadInFlight = null;
+  let currentInviteCode = '';
+  let currentInviteLink = '';
 
   function render() {
     $('#admins-body').innerHTML = admins.length ? admins.map(item => {
@@ -23,6 +27,26 @@ export function initAdminUsers({api, dateText}) {
         </div></td>
       </tr>`;
     }).join('') : '<tr><td colspan="5" class="empty">暂无管理员</td></tr>';
+  }
+
+  function inviteStatus(invite) {
+    if (invite.used_at) return {className: 'completed', text: '已使用'};
+    if (invite.revoked_at) return {className: 'failed', text: '已吊销'};
+    return {className: 'online', text: '可注册'};
+  }
+
+  function renderInvites() {
+    $('#invite-count').textContent = `${invites.length} 个邀请`;
+    $('#invites-body').innerHTML = invites.length ? invites.map(invite => {
+      const status = inviteStatus(invite);
+      const active = !invite.used_at && !invite.revoked_at;
+      return `<tr>
+        <td><span class="status ${status.className}">${status.text}</span></td>
+        <td>${dateText(invite.created_at)}</td>
+        <td>${dateText(invite.used_at)}</td>
+        <td><div class="row-actions">${active ? `<button class="danger invite-action" data-id="${escapeHTML(invite.id)}" type="button">吊销</button>` : '<span class="muted">不可操作</span>'}</div></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="4" class="empty">暂无邀请</td></tr>';
   }
 
   // Mutations wait for an older list request and then force a new snapshot, so a
@@ -45,43 +69,64 @@ export function initAdminUsers({api, dateText}) {
     finally { if (loadInFlight === request) loadInFlight = null; }
   }
 
-  $('#new-admin').addEventListener('click', () => {
-    $('#admin-error').classList.add('hidden');
-    $('#admin-dialog').showModal();
-    $('#admin-form input[name="username"]').focus();
-  });
-  document.querySelectorAll('.close-admin').forEach(button => button.addEventListener('click', () => $('#admin-dialog').close()));
+  async function loadInvites({force = false} = {}) {
+    if (invitesLoadInFlight) {
+      if (!force) return invitesLoadInFlight;
+      const activeRequest = invitesLoadInFlight;
+      try { await activeRequest; } catch (_) { /* Continue with the required fresh request. */ }
+      if (invitesLoadInFlight === activeRequest) invitesLoadInFlight = null;
+      return loadInvites();
+    }
+    const request = api('/api/admin-invites').then(items => {
+      invites = Array.isArray(items) ? items : [];
+      renderInvites();
+      return invites;
+    });
+    invitesLoadInFlight = request;
+    try { return await request; }
+    finally { if (invitesLoadInFlight === request) invitesLoadInFlight = null; }
+  }
 
-  // The browser checks confirmation equality for fast feedback. The Server still
-  // validates the one submitted password before hashing it with bcrypt.
-  $('#admin-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const errorBox = $('#admin-error');
-    const submit = formElement.querySelector('button[type="submit"]');
-    const password = String(form.get('password') || '');
+  $('#new-admin').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const errorBox = $('#invite-error');
     errorBox.classList.add('hidden');
-    if (password !== String(form.get('password_confirm') || '')) {
-      errorBox.textContent = '两次输入的密码不一致。';
-      errorBox.classList.remove('hidden');
-      return;
-    }
-    submit.disabled = true;
-    submit.textContent = '创建中…';
+    button.disabled = true;
+    button.textContent = '生成中…';
     try {
-      await api('/api/admin-users', {method:'POST', body:JSON.stringify({username:form.get('username'), password})});
-      $('#admin-dialog').close();
-      formElement.reset();
-      await load({force: true});
-      showToast('管理员已创建。', 'success');
+      const result = await api('/api/admin-invites', {method:'POST'});
+      currentInviteCode = result.code || '';
+      currentInviteLink = `${window.location.origin}/register?invite=${encodeURIComponent(currentInviteCode)}`;
+      $('#invite-code-output').value = currentInviteCode;
+      $('#invite-link-output').value = currentInviteLink;
+      $('#copy-invite').textContent = '复制邀请码';
+      $('#copy-invite-link').textContent = '复制链接';
+      $('#invite-dialog').showModal();
+      await loadInvites({force: true});
+      showToast('邀请已生成。', 'success', 6000);
     } catch (error) {
-      errorBox.textContent = error.message;
-      errorBox.classList.remove('hidden');
+      showToast(error.message, 'error', 6000);
     } finally {
-      submit.disabled = false;
-      submit.textContent = '创建';
+      button.disabled = false;
+      button.textContent = '生成邀请';
     }
+  });
+  document.querySelectorAll('.close-invite').forEach(button => button.addEventListener('click', () => $('#invite-dialog').close()));
+
+  $('#copy-invite').addEventListener('click', async () => {
+    try {
+      await copyText(currentInviteCode);
+      $('#copy-invite').textContent = '已复制';
+      showToast('邀请码已复制。', 'success');
+    } catch (_) { showToast('浏览器拒绝访问剪贴板，请手动复制。', 'error'); }
+  });
+
+  $('#copy-invite-link').addEventListener('click', async () => {
+    try {
+      await copyText(currentInviteLink);
+      $('#copy-invite-link').textContent = '已复制';
+      showToast('注册链接已复制。', 'success');
+    } catch (_) { showToast('浏览器拒绝访问剪贴板，请手动复制。', 'error'); }
   });
 
   // Disabling revokes all target sessions and deletion is permanent. The Server
@@ -106,5 +151,20 @@ export function initAdminUsers({api, dateText}) {
     }
   });
 
-  return {load};
+  $('#invites-body').addEventListener('click', async event => {
+    const button = event.target.closest('.invite-action');
+    if (!button || button.disabled) return;
+    if (!confirm('确认吊销这个注册邀请？')) return;
+    button.disabled = true;
+    try {
+      await api(`/api/admin-invites/${button.dataset.id}`, {method:'DELETE'});
+      await loadInvites({force: true});
+      showToast('邀请已吊销。', 'success');
+    } catch (error) {
+      button.disabled = false;
+      showToast(error.message, 'error');
+    }
+  });
+
+  return {load: async () => Promise.all([load(), loadInvites()])};
 }

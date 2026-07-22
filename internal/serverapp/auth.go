@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"smalux-speedtest/internal/store"
 )
 
 // pageData 是需要 CSRF Token 的管理页面共用模板数据。
@@ -18,8 +20,12 @@ type pageData struct {
 }
 
 type loginPageData struct {
-	Error    string
-	Username string
+	Error            string
+	Username         string
+	RegisterError    string
+	RegisterUsername string
+	InviteCode       string
+	Mode             string
 }
 
 type sessionContextKey struct{}
@@ -31,7 +37,17 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{})
+	_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Mode: "login"})
+}
+
+// registerPage 与登录页共用模板，让已拿到邀请码的新管理员可以自助创建普通账户。
+func (a *App) registerPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if _, ok := a.session(r); ok {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Mode: "register", InviteCode: strings.TrimSpace(r.URL.Query().Get("invite"))})
 }
 
 // login 校验管理员密码并签发 12 小时有效的内存会话。
@@ -41,7 +57,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Error: "用户名或密码错误"})
+		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Error: "用户名或密码错误", Mode: "login"})
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
@@ -52,7 +68,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	admin, err := a.store.AuthenticateAdmin(r.Context(), username, r.FormValue("password"))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Error: "用户名或密码错误", Username: username})
+		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{Error: "用户名或密码错误", Username: username, Mode: "login"})
 		return
 	}
 	session := a.sessions.create(admin.ID, admin.Username, admin.IsOwner)
@@ -61,6 +77,69 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// register 使用一次性邀请码创建普通管理员，并直接签发登录会话。
+//
+// 邀请码是注册资格本身，服务端只保存摘要；失败时对无效、已用和已吊销邀请码使用
+// 同一提示，避免公开接口泄漏邀请状态。
+func (a *App) register(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	r.Body = http.MaxBytesReader(w, r.Body, 12<<10)
+	if err := r.ParseForm(); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{RegisterError: "注册信息无效", Mode: "register"})
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	if password != r.FormValue("password_confirm") {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{
+			RegisterError: "两次输入的密码不一致", RegisterUsername: username, InviteCode: strings.TrimSpace(r.FormValue("invite_code")), Mode: "register",
+		})
+		return
+	}
+	admin, err := a.store.RegisterAdminWithInvite(r.Context(), r.FormValue("invite_code"), username, password)
+	if err != nil {
+		w.WriteHeader(registerErrorStatus(err))
+		_ = a.template.ExecuteTemplate(w, "login.html", loginPageData{
+			RegisterError: registerErrorMessage(err), RegisterUsername: username, InviteCode: strings.TrimSpace(r.FormValue("invite_code")), Mode: "register",
+		})
+		return
+	}
+	session := a.sessions.create(admin.ID, admin.Username, admin.IsOwner)
+	http.SetCookie(w, &http.Cookie{
+		Name: "smalux_session", Value: session.token, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
+	})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func registerErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, store.ErrAdminUsernameTaken):
+		return http.StatusConflict
+	case errors.Is(err, store.ErrInvalidAdminUsername), errors.Is(err, store.ErrInvalidAdminPassword), errors.Is(err, store.ErrInvalidAdminInvite):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func registerErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, store.ErrInvalidAdminUsername):
+		return "用户名需为 3-32 位，以字母开头，仅含字母、数字、点、横线或下划线"
+	case errors.Is(err, store.ErrInvalidAdminPassword):
+		return "密码至少需要 8 个字符、不能超过 72 字节，且不能包含控制字符"
+	case errors.Is(err, store.ErrAdminUsernameTaken):
+		return "用户名已存在"
+	case errors.Is(err, store.ErrInvalidAdminInvite):
+		return "邀请码无效或已使用"
+	default:
+		return "注册失败，请稍后重试"
+	}
 }
 
 // logout 同时删除服务端会话并通过负 MaxAge 清除浏览器 Cookie。

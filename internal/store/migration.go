@@ -24,6 +24,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		// telegram_config 保存由 Server 本机密钥加密后的 Bot Token；数据库本身不含可调用凭据。
+		`CREATE TABLE IF NOT EXISTS telegram_config (
+			id INTEGER PRIMARY KEY CHECK(id=1),
+			token_cipher BLOB NOT NULL,
+			bot_id INTEGER NOT NULL CHECK(bot_id > 0),
+			bot_username TEXT NOT NULL DEFAULT '',
+			owner_telegram_id INTEGER NOT NULL CHECK(owner_telegram_id > 0),
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+			updated_at TEXT NOT NULL
+		)`,
 		// telegram_users 是 Telegram Bot 的授权白名单。owner 由服务启动配置同步，
 		// 普通授权只允许管理 is_owner=0 的行；用户名仅用于展示，身份判断始终使用 ID。
 		`CREATE TABLE IF NOT EXISTS telegram_users (
@@ -36,6 +46,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		// 部分唯一索引让 is_owner=0 的普通用户不受限制，同时从 schema 层保证 owner 唯一。
 		`CREATE UNIQUE INDEX IF NOT EXISTS telegram_users_owner_idx ON telegram_users(is_owner) WHERE is_owner=1`,
+		// admin_invites 只保存一次性邀请码摘要。明文邀请码只在 Owner 生成时返回一次，
+		// 公开注册接口提交后在事务内消费，避免数据库泄漏后可直接创建管理账户。
+		`CREATE TABLE IF NOT EXISTS admin_invites (
+			id TEXT PRIMARY KEY,
+			code_hash TEXT NOT NULL UNIQUE,
+			created_by_admin_id TEXT NOT NULL,
+			used_by_admin_id TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			used_at TEXT NOT NULL DEFAULT '',
+			revoked_at TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS admin_invites_created_idx ON admin_invites(created_at DESC)`,
 		// clients 仅保存不可逆 token_hash，明文令牌只在 CreateClient 返回一次。
 		`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,

@@ -1,5 +1,4 @@
 import { $, copyText, escapeHTML, redirectToLogin, showToast, statusText } from './ui.js';
-import { initAdminUsers } from './admin-users.js';
 
 // CSRF 令牌由服务端模板注入。所有改变服务端状态的请求都必须携带该值，
 // 防止其他站点借用管理员浏览器中的会话发起跨站请求。
@@ -24,7 +23,14 @@ const api = async (url, options = {}) => {
 };
 
 const dateText = value => value ? new Date(value).toLocaleString() : '—';
-const adminUsers = initAdminUsers({api, dateText});
+
+// 创建凭据时根据当前管理页面入口生成对应 WebSocket 地址。Token 放进临时环境变量，
+// 避免直接作为进程参数出现；该命令只存在于一次性创建响应和当前对话框内。
+function windowsClientCommand(token) {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const serverURL = `${scheme}//${window.location.host}/ws/client`;
+  return `$env:SMALUX_CLIENT_TOKEN='${String(token).replaceAll("'", "''")}'\n.\\smalux-client-windows-amd64.exe -server '${serverURL}'`;
+}
 
 function setSyncStatus(state, text) {
   const status = $('#sync-status');
@@ -86,12 +92,12 @@ async function loadClients({force = false} = {}) {
     $('#clients-body').innerHTML = clients.length ? clients.map(item => `
       <tr>
         <td><span class="status ${item.online ? 'online' : ''}">${item.online ? '在线' : '离线'}</span></td>
-        <td><strong>${escapeHTML(item.name)}</strong></td>
+        <td>${item.manageable ? `<button class="client-edit-trigger edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button"><strong>${escapeHTML(item.name)}</strong><span>编辑</span></button>` : `<strong>${escapeHTML(item.name)}</strong>`}</td>
         <td>${escapeHTML([item.os, item.arch].filter(Boolean).join(' / ') || '—')}</td>
         <td class="mono">${escapeHTML(item.version || '—')}</td>
         <td>${Object.entries(item.labels || {}).map(([key,value]) => `<span class="tag">${escapeHTML(key)}=${escapeHTML(value)}</span>`).join('') || '—'}</td>
         <td>${dateText(item.last_seen)}</td>
-        <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" type="button">编辑</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
+        <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button">编辑</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" title="永久吊销 Token" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
       </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无 Client</td></tr>';
     renderClientOptions(previousSelection, firstRender);
     return clients;
@@ -136,7 +142,7 @@ async function refresh() {
   const button = $('#refresh');
   button.disabled = true;
   setSyncStatus('busy', '同步中');
-  refreshInFlight = Promise.all([loadClients(), loadTasks(), adminUsers.load()]).then(() => {
+  refreshInFlight = Promise.all([loadClients(), loadTasks()]).then(() => {
     setSyncStatus('success', `已更新 ${new Date().toLocaleTimeString()}`);
   }).catch(error => {
     setSyncStatus('error', '同步失败');
@@ -198,7 +204,9 @@ $('#client-form').addEventListener('submit', async event => {
     const result = await api('/api/clients', {method:'POST', body: JSON.stringify({name: form.get('name'), labels})});
     $('#client-dialog').close();
     $('#client-token').value = result.token;
+    $('#client-command').value = windowsClientCommand(result.token);
     $('#copy-token').textContent = '复制 Token';
+    $('#copy-client-command').textContent = '复制运行命令';
     $('#token-dialog').showModal();
     formElement.reset();
     await loadClients({force: true});
@@ -220,6 +228,14 @@ $('#copy-token').addEventListener('click', async () => {
   } catch (_) { showToast('浏览器拒绝访问剪贴板，请手动复制。', 'error'); }
 });
 
+$('#copy-client-command').addEventListener('click', async () => {
+  try {
+    await copyText($('#client-command').value);
+    $('#copy-client-command').textContent = '已复制';
+    showToast('Windows 运行命令已复制。', 'success');
+  } catch (_) { showToast('浏览器拒绝访问剪贴板，请手动复制。', 'error'); }
+});
+
 // 吊销会使数据库认证和当前 WebSocket 连接同时失效，历史结果仍保留 Client 关联。
 $('#clients-body').addEventListener('click', async event => {
   const editButton = event.target.closest('.edit-client');
@@ -227,12 +243,12 @@ $('#clients-body').addEventListener('click', async event => {
     const client = clients.find(item => item.id === editButton.dataset.id);
     if (!client || !client.manageable) return;
     const form = $('#edit-client-form');
-    form.elements.id.value = client.id;
-    form.elements.name.value = client.name;
-    form.elements.labels.value = Object.entries(client.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ');
+    form.querySelector('[name="id"]').value = client.id;
+    form.querySelector('[name="name"]').value = client.name;
+    form.querySelector('[name="labels"]').value = Object.entries(client.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ');
     $('#edit-client-error').classList.add('hidden');
     $('#edit-client-dialog').showModal();
-    form.elements.name.focus();
+    form.querySelector('[name="name"]').focus();
     return;
   }
   const button = event.target.closest('.revoke-client');

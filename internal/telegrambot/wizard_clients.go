@@ -122,7 +122,8 @@ func clientKeyboard(state *wizardState) *InlineKeyboardMarkup {
 	rows := make([][]InlineKeyboardButton, 0, clientPageSize+4)
 	for index := start; index < end; index++ {
 		client := state.clients[index]
-		mark := "□"
+		// 使用 Telegram 字体中更醒目的方块，避免细线字符在手机端难以辨认。
+		mark := "⬜"
 		if state.selectedClients[client.ID] {
 			mark = "🟩"
 		}

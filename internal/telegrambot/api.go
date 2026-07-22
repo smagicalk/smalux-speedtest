@@ -34,6 +34,14 @@ type HTTPAPI struct {
 	client  *http.Client
 }
 
+// BotIdentity 是 getMe 返回的 Bot 公共身份，用于网页绑定前校验 Token。
+type BotIdentity struct {
+	ID        int64  `json:"id"`
+	IsBot     bool   `json:"is_bot"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+}
+
 // APIError 表示 Telegram 返回的非成功业务响应或 HTTP 状态。
 type APIError struct {
 	Method     string
@@ -117,6 +125,18 @@ func (a *HTTPAPI) GetUpdates(ctx context.Context, offset int64, timeout time.Dur
 		return nil, err
 	}
 	return updates, nil
+}
+
+// GetMe 校验 Token 有效性并返回 Bot 身份；调用方不得记录 Token。
+func (a *HTTPAPI) GetMe(ctx context.Context) (BotIdentity, error) {
+	var identity BotIdentity
+	if err := a.callJSON(ctx, "getMe", struct{}{}, &identity); err != nil {
+		return BotIdentity{}, err
+	}
+	if identity.ID <= 0 || !identity.IsBot {
+		return BotIdentity{}, errors.New("telegram token is not a Bot token")
+	}
+	return identity, nil
 }
 
 func (a *HTTPAPI) SetMyCommands(ctx context.Context, commands []BotCommand) error {
