@@ -9,14 +9,17 @@ on:
   # A published GitHub Release remains supported for releases created in the UI.
   release:
     types: [published]
-  # Manual runs are useful for validating cross-compilation before publishing a release.
+  # Manual runs are useful for validating one selected cross-compilation target.
   workflow_dispatch:
     inputs:
       ref:
-        description: 要构建的分支、Tag 或 Commit
+        description: 要构建的分支
         required: true
         default: vibe-dev
-        type: string
+        type: choice
+        options:
+          - vibe-dev
+          - main
       os:
         description: 手动构建的系统
         required: true
@@ -38,12 +41,10 @@ on:
         description: 包版本名称
         required: true
         default: dev
-        type: string
-      release_tag:
-        description: Optional existing Release tag to upload to; no Release is created
-        required: false
-        default: ''
-        type: string
+        type: choice
+        options:
+          - dev
+          - test
 
 # Build jobs only need to read the repository. The publish job below requests write
 # access separately and only runs when a real Release target was provided.
@@ -51,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: smalux-release-${{ github.event.release.tag_name || inputs.release_tag || github.ref || github.run_id }}
+  group: smalux-release-${{ github.event.release.tag_name || github.ref || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -64,8 +65,8 @@ jobs:
     env:
       # Release/tag runs select the exact tag. Main and manual runs may build a
       # branch or commit without publishing a GitHub Release.
-      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' && inputs.release_tag || inputs.ref) || github.ref }}
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.release_tag || startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
@@ -138,7 +139,7 @@ jobs:
     env:
       # Release/tag uploads embed their tag. Main and manual artifact-only runs
       # use the supplied version or the current ref name.
-      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' && inputs.release_tag || inputs.version) || github.ref_name }}
+      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
@@ -247,16 +248,16 @@ jobs:
   publish:
     name: Publish Release assets
     needs: [test, collect]
-    # Main/manual runs without a release tag intentionally stop after Actions
-    # artifacts. A pushed v* tag creates its Release automatically when needed.
-    if: ${{ github.event_name == 'release' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+    # Main/manual runs intentionally stop after Actions artifacts. A pushed v* tag
+    # creates its Release automatically when needed.
+    if: ${{ github.event_name == 'release' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
       actions: read
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
       TESTED_COMMIT: ${{ needs.test.outputs.commit }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

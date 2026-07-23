@@ -206,7 +206,7 @@ sudo ./smalux.sh uninstall</code></pre>
         <ul>
           <li>推送 <code>main</code>：运行测试并上传六个平台包作为 Actions Artifact。</li>
           <li>推送 <code>v*</code> Tag：运行测试、编译六个平台、生成 SHA256SUMS 并上传 GitHub Release。</li>
-          <li>手动触发：选择分支/Tag/Commit、系统、架构和版本，只编译所选的一个目标；填写 <code>release_tag</code> 时上传到既有 Release，否则只保留测试 Artifact。</li>
+          <li>手动触发：通过下拉框选择 <code>vibe-dev</code> 或 <code>main</code>、系统、架构和版本，只编译所选的一个目标并保留为测试 Artifact。</li>
         </ul>
         <pre><button class="copy" type="button">复制</button><code># 手动验证当前分支的交叉编译
 gh workflow run "Build And Release" \
