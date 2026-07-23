@@ -13,12 +13,29 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Source branch, tag, or commit for artifact-only test builds
+        description: 要构建的分支、Tag 或 Commit
         required: true
         default: vibe-dev
         type: string
+      os:
+        description: 手动构建的系统
+        required: true
+        default: linux
+        type: choice
+        options:
+          - linux
+          - windows
+          - darwin
+      arch:
+        description: 手动构建的架构
+        required: true
+        default: amd64
+        type: choice
+        options:
+          - amd64
+          - arm64
       version:
-        description: Version for artifact-only test builds
+        description: 包版本名称
         required: true
         default: dev
         type: string
@@ -83,29 +100,41 @@ jobs:
       - name: Run tests
         run: go test -buildvcs=false -tags with_utls ./...
 
+  select-build-matrix:
+    name: Select build targets
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Select manual target or all release targets
+        id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_OS: ${{ inputs.os }}
+          MANUAL_ARCH: ${{ inputs.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            printf 'matrix={"include":[{"goos":"%s","goarch":"%s"}]}\n' \
+              "$MANUAL_OS" "$MANUAL_ARCH" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' \
+              'matrix={"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"},{"goos":"windows","goarch":"amd64"},{"goos":"windows","goarch":"arm64"},{"goos":"darwin","goarch":"amd64"},{"goos":"darwin","goarch":"arm64"}]}' \
+              >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
-    needs: test
+    needs: [test, select-build-matrix]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
+      matrix: ${{ fromJSON(needs.select-build-matrix.outputs.matrix) }}
     env:
       # Release/tag uploads embed their tag. Main and manual artifact-only runs
       # use the supplied version or the current ref name.
@@ -197,8 +226,12 @@ jobs:
           set -euo pipefail
           cd release
           mapfile -t packages < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort)
-          if (( ${#packages[@]} != 6 )); then
-            printf 'expected six platform packages, found %d\n' "${#packages[@]}" >&2
+          expected_count=6
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            expected_count=1
+          fi
+          if (( ${#packages[@]} != expected_count )); then
+            printf 'expected %d platform package(s), found %d\n' "$expected_count" "${#packages[@]}" >&2
             exit 1
           fi
           sha256sum "${packages[@]}" > SHA256SUMS

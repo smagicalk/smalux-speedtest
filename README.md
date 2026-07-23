@@ -104,7 +104,7 @@ For temporary trusted-network testing only, start the Server with `-allow-insecu
 
 `.github/workflows/release.yml` runs automatically for pushes to `main` and for `v*` tag pushes. A `main` push builds downloadable Actions artifacts for integration testing. A tag such as `v1.0.0` builds Server and the uTLS-enabled Client for Linux, Windows, and macOS on amd64 and arm64, creates the matching GitHub Release when necessary, then uploads six archives plus `SHA256SUMS`. Publishing a Release from the GitHub UI is also supported.
 
-The same workflow can be started manually from GitHub Actions with a branch, tag, or commit and a version. With an empty `release_tag`, packages are kept only as a downloadable Actions artifact for testing. Supplying an existing `release_tag` builds that exact tested tag and uploads to the matching Release. All third-party Actions are pinned to full commits.
+The same workflow can be started manually from GitHub Actions with a branch, tag, or commit, one target operating system (`linux`, `windows`, or `darwin`), one architecture (`amd64` or `arm64`), and a package version. Manual validation compiles only that selected target instead of the full six-target matrix. With an empty `release_tag`, the package and its checksum are kept only as downloadable Actions artifacts. Supplying an existing `release_tag` builds that exact tested tag and uploads the selected package to the matching Release. All third-party Actions are pinned to full commits.
 
 ## Source layout
 
