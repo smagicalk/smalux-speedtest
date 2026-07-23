@@ -72,10 +72,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := a.sessions.create(admin.ID, admin.Username, admin.IsOwner)
-	http.SetCookie(w, &http.Cookie{
-		Name: "smalux_session", Value: session.token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
-	})
+	setSessionCookie(w, r, session)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -109,10 +106,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := a.sessions.create(admin.ID, admin.Username, admin.IsOwner)
-	http.SetCookie(w, &http.Cookie{
-		Name: "smalux_session", Value: session.token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
-	})
+	setSessionCookie(w, r, session)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -150,6 +144,15 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: "smalux_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// setSessionCookie is the single policy point for login, registration and password
+// change session cookies.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, session *session) {
+	http.SetCookie(w, &http.Cookie{
+		Name: "smalux_session", Value: session.token, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, Secure: requestIsTLS(r), MaxAge: 12 * 60 * 60,
+	})
 }
 
 // dashboard 渲染控制台，并把当前会话的 CSRF Token 注入 meta 标签供前端 API 使用。

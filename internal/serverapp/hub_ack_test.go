@@ -33,9 +33,18 @@ func TestDisconnectDuringACKRequeuesCommittedRunningState(t *testing.T) {
 	}
 	hub := NewHub(database, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	connected := &peer{client: client}
-	runtime := &runtimeTask{assignment: testAssignment(task.ID), targets: map[string]string{client.ID: "assigned"}}
+	assignment := testAssignment(task.ID)
+	workID := model.NewID()
+	ref := workRef{taskID: task.ID, clientID: client.ID, proxyID: assignment.Proxies[0].ID, workID: workID}
+	key := hub.proxyWorkKey(assignment.Proxies[0].Outbound)
+	runtime := &runtimeTask{
+		assignment: assignment, targets: map[string]string{client.ID: "assigned"},
+		work: map[string]*targetWork{client.ID: {order: []string{assignment.Proxies[0].ID}, completed: map[string]struct{}{}, active: &workLease{ref: ref, proxyKey: key, state: "assigned"}}},
+	}
 	hub.peers[client.ID] = connected
 	hub.tasks[task.ID] = runtime
+	hub.clientWork[client.ID] = ref
+	hub.proxyWork[key] = ref
 
 	blocker, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -57,7 +66,7 @@ func TestDisconnectDuringACKRequeuesCommittedRunningState(t *testing.T) {
 
 	ackDone := make(chan struct{})
 	go func() {
-		hub.setTargetRunning(t.Context(), task.ID, connected)
+		hub.setTargetRunning(t.Context(), task.ID, workID, connected)
 		close(ackDone)
 	}()
 	deadline := time.Now().Add(2 * time.Second)

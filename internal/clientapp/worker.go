@@ -30,7 +30,7 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 			taskCtx, cancel := context.WithTimeout(ctx, timeout)
 			connected.setCurrent(assignment.TaskID, cancel)
 			// ACK 表示客户端已开始接管任务，而不是测速已经成功。
-			ack, _ := wire.New(wire.TypeTaskAck, assignment.TaskID, model.Ack{TaskID: assignment.TaskID})
+			ack, _ := wire.New(wire.TypeTaskAck, assignment.TaskID, model.Ack{TaskID: assignment.TaskID, WorkID: assignment.WorkID})
 			if err := connected.send(ctx, ack); err != nil {
 				cancel()
 				connected.clearCurrent(assignment.TaskID)
@@ -64,9 +64,9 @@ func (c *Client) worker(ctx context.Context, connected *connection, assignments 
 			// Execute 可能在取消前已经产生部分 Result；这些结果仍会先发送，随后以 Failed
 			// 明确标记任务未完整结束。
 			if err := taskCtx.Err(); err != nil {
-				terminal, _ = wire.New(wire.TypeTaskFailed, assignment.TaskID, model.Failure{TaskID: assignment.TaskID, Error: model.NormalizeTaskFailure(err.Error())})
+				terminal, _ = wire.New(wire.TypeTaskFailed, assignment.TaskID, model.Failure{TaskID: assignment.TaskID, WorkID: assignment.WorkID, Error: model.NormalizeTaskFailure(err.Error())})
 			} else {
-				terminal, _ = wire.New(wire.TypeTaskComplete, assignment.TaskID, model.Ack{TaskID: assignment.TaskID})
+				terminal, _ = wire.New(wire.TypeTaskComplete, assignment.TaskID, model.Ack{TaskID: assignment.TaskID, WorkID: assignment.WorkID})
 			}
 			writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 			err := connected.send(writeCtx, terminal)

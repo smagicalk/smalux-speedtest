@@ -1,0 +1,43 @@
+{{define "account.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{.CSRF}}">
+  <title>账户安全 · Smalux Speedtest</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
+    <div class="top-actions">
+      <a class="quiet button-link compact" href="/">返回控制台</a>
+      {{if .IsOwner}}<a class="quiet button-link compact" href="/settings">系统设置</a>{{end}}
+      <span class="account-chip" title="当前管理员">{{.Username}}</span>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
+    </div>
+  </header>
+
+  <main class="workspace account-workspace">
+    <section class="section account-security-section">
+      <div class="section-heading">
+        <div><h1>账户安全</h1><p>更新 {{.Username}} 的控制台登录密码</p></div>
+        <span class="status online">已登录</span>
+      </div>
+      <form id="password-form" class="settings-form password-form">
+        <label class="field"><span>当前密码</span><input name="current_password" type="password" autocomplete="current-password" required maxlength="72"></label>
+        <label class="field"><span>新密码</span><input name="new_password" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+        <label class="field"><span>确认新密码</span><input name="new_password_confirm" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+        <div id="password-error" class="alert error hidden" role="alert"></div>
+        <div class="password-notice">保存后，其他设备上的登录会话将立即失效。</div>
+        <div class="form-actions"><button class="primary" type="submit">修改密码</button></div>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/static/account.js"></script>
+</body>
+</html>
+{{end}}

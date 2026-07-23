@@ -66,6 +66,7 @@ func (h *Hub) cancelTask(ctx context.Context, taskID, detail string) error {
 				task.targets[clientID] = "canceled"
 			}
 		}
+		h.releaseTaskWorkLocked(taskID, task)
 		model.EraseAssignment(&task.assignment)
 		delete(h.tasks, taskID)
 	}
@@ -74,6 +75,7 @@ func (h *Hub) cancelTask(ctx context.Context, taskID, detail string) error {
 
 	h.notifyTaskCancellation(ctx, taskID, peers)
 	h.publish(taskID, taskEvent{Type: "status", Status: "canceled"})
+	h.schedule()
 	return nil
 }
 

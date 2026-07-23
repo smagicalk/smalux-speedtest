@@ -10,7 +10,7 @@ const (
 	// MaxClientToServerMessageBytes 限制 Client 上报的单条消息。结果和进度都远小于
 	// 2 MiB；保留该上限可约束持有合法 Token 的异常 Client 占用服务端内存。
 	MaxClientToServerMessageBytes = 2 << 20
-	// MaxServerToClientMessageBytes 与已发布的协议版本 1 Client 读上限保持一致。
+	// MaxServerToClientMessageBytes 与已发布 Client 的读上限保持一致。
 	// 任务创建前会以相同常量检查最终 Envelope，避免新 Server 向旧 Client 下发其
 	// 无法读取的消息。若以后需要扩大上限，应升级协议版本或在 hello 中显式协商。
 	MaxServerToClientMessageBytes = 2 << 20

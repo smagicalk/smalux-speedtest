@@ -83,18 +83,22 @@ func TestWebSocketTaskLifecycle(t *testing.T) {
 	if err := wsjson.Read(wsCtx, connection, &assigned); err != nil || assigned.Type != wire.TypeTaskAssign {
 		t.Fatalf("invalid assignment: %+v %v", assigned, err)
 	}
-	ack, _ := wire.New(wire.TypeTaskAck, taskID, model.Ack{TaskID: taskID})
+	work, err := wire.Decode[model.Assignment](assigned)
+	if err != nil || work.WorkID == "" || len(work.Proxies) != 1 {
+		t.Fatalf("invalid work payload: %+v %v", work, err)
+	}
+	ack, _ := wire.New(wire.TypeTaskAck, taskID, model.Ack{TaskID: taskID, WorkID: work.WorkID})
 	if err := wsjson.Write(wsCtx, connection, ack); err != nil {
 		t.Fatal(err)
 	}
 	// 结果载荷故意不设置 ClientID，验证 Hub 会使用已认证 peer 的 Client ID 覆盖身份。
 	resultMessage, _ := wire.New(wire.TypeTaskResult, taskID, model.SpeedResult{
-		TaskID: taskID, ProxyID: "proxy", ProxyName: "node", Protocol: "socks", MaskedAddress: "*.example.com:1080", SpeedServerID: "1", LatencyMS: 12,
+		TaskID: taskID, WorkID: work.WorkID, ProxyID: "proxy", ProxyName: "node", Protocol: "socks", MaskedAddress: "*.example.com:1080", SpeedServerID: "1", LatencyMS: 12,
 	})
 	if err := wsjson.Write(wsCtx, connection, resultMessage); err != nil {
 		t.Fatal(err)
 	}
-	complete, _ := wire.New(wire.TypeTaskComplete, taskID, model.Ack{TaskID: taskID})
+	complete, _ := wire.New(wire.TypeTaskComplete, taskID, model.Ack{TaskID: taskID, WorkID: work.WorkID})
 	if err := wsjson.Write(wsCtx, connection, complete); err != nil {
 		t.Fatal(err)
 	}

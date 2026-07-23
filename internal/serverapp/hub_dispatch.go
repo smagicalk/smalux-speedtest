@@ -2,6 +2,8 @@ package serverapp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"sync"
 	"time"
 
@@ -9,6 +11,32 @@ import (
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
 )
+
+type workRef struct {
+	taskID   string
+	clientID string
+	proxyID  string
+	workID   string
+}
+
+type workLease struct {
+	ref      workRef
+	proxyKey [32]byte
+	state    string
+}
+
+type targetWork struct {
+	order     []string
+	completed map[string]struct{}
+	active    *workLease
+}
+
+type reservedWork struct {
+	task       *runtimeTask
+	connected  *peer
+	assignment model.Assignment
+	ref        workRef
+}
 
 const (
 	taskLifetime           = 10 * time.Minute
@@ -30,6 +58,13 @@ type runtimeTask struct {
 	// completed/failed。assigned 是防止重复下发的纯内存状态，SQLite 中仍表示为 queued；
 	// 管理员取消可进入 canceled，assigned/running Client 断线或被替换时会回到 queued。
 	targets map[string]string
+	// work tracks per-Client proxy completion while target status remains the
+	// persisted aggregate. proxyKeys are ephemeral HMAC values used only to prevent
+	// two Clients from testing the same proxy at once.
+	work        map[string]*targetWork
+	proxyKeys   map[string][32]byte
+	proxyIndex  map[string]int
+	targetOrder []string
 	// resultProxies 是从 Assignment 派生的只读身份表。Client 结果只能引用其中的 ID，
 	// 代理名称、协议和脱敏地址也始终由此服务端快照覆盖。
 	resultProxies map[string]resultProxyIdentity
@@ -71,23 +106,42 @@ func (h *Hub) AddTask(assignment model.Assignment, clientIDs []string) {
 	}
 	task := &runtimeTask{
 		assignment: assignment, targets: make(map[string]string),
+		work:                make(map[string]*targetWork, len(clientIDs)),
+		proxyKeys:           make(map[string][32]byte, len(assignment.Proxies)),
+		proxyIndex:          make(map[string]int, len(assignment.Proxies)),
+		targetOrder:         append([]string(nil), clientIDs...),
 		resultProxies:       make(map[string]resultProxyIdentity, len(assignment.Proxies)),
 		resultKeys:          make(map[string]map[string]struct{}, len(clientIDs)),
 		resultCounts:        make(map[string]map[string]int, len(clientIDs)),
 		resultLimit:         len(assignment.Proxies) * resultLimitPerProxy,
 		resultLimitPerProxy: resultLimitPerProxy,
 	}
-	for _, proxy := range assignment.Proxies {
+	proxyIDs := make([]string, 0, len(assignment.Proxies))
+	for index, proxy := range assignment.Proxies {
 		task.resultProxies[proxy.ID] = resultIdentityFromProxy(proxy)
+		task.proxyKeys[proxy.ID] = h.proxyWorkKey(proxy.Outbound)
+		task.proxyIndex[proxy.ID] = index
+		proxyIDs = append(proxyIDs, proxy.ID)
 	}
-	for _, id := range clientIDs {
+	// HTTP task creation rejects an empty import. Keep AddTask defensive because it
+	// is also used by tests and may later be called by non-HTTP integrations.
+	if len(proxyIDs) == 0 {
+		return
+	}
+	for clientIndex, id := range clientIDs {
 		task.targets[id] = "queued"
+		order := make([]string, len(proxyIDs))
+		for index := range proxyIDs {
+			order[index] = proxyIDs[(index+clientIndex)%len(proxyIDs)]
+		}
+		task.work[id] = &targetWork{order: order, completed: make(map[string]struct{}, len(proxyIDs))}
 	}
 	// 超时回调可能与 ACK、完成或管理员取消并发；后续转换函数会在锁内检查当前状态，
 	// 使重复终态通知保持幂等。
 	task.expires = time.AfterFunc(taskLifetime, func() { h.expireTask(assignment.TaskID) })
 	h.mu.Lock()
 	h.tasks[assignment.TaskID] = task
+	h.taskOrder = append(h.taskOrder, assignment.TaskID)
 	var revoked []string
 	var dispatchable []string
 	for _, id := range clientIDs {
@@ -103,71 +157,175 @@ func (h *Hub) AddTask(assignment model.Assignment, clientIDs []string) {
 	for _, id := range revoked {
 		h.finishTarget(context.Background(), assignment.TaskID, id, "failed", "client token revoked")
 	}
-	for _, id := range dispatchable {
-		h.dispatch(assignment.TaskID, id)
+	if len(dispatchable) > 0 {
+		h.schedule()
 	}
 }
 
-// dispatchQueued 收集指定 Client 的 queued 任务，并在释放读锁后逐个尝试派发。
-func (h *Hub) dispatchQueued(clientID string) {
-	h.mu.RLock()
-	var taskIDs []string
-	for taskID, task := range h.tasks {
-		if !task.terminalPending && task.targets[clientID] == "queued" {
-			taskIDs = append(taskIDs, taskID)
+// dispatchQueued and dispatch remain narrow compatibility points for connection and
+// lifecycle code. The scheduler always considers every idle Client and active task so
+// freed capacity can be used immediately by another task.
+func (h *Hub) dispatchQueued(string)   { h.schedule() }
+func (h *Hub) dispatch(string, string) { h.schedule() }
+
+// schedule fills all currently usable Client capacity. Each reservation owns both a
+// Client slot and an ephemeral proxy fingerprint, so no Client receives a second unit
+// and no two Clients test the same proxy concurrently.
+func (h *Hub) schedule() {
+	h.scheduleMu.Lock()
+	defer h.scheduleMu.Unlock()
+	excluded := make(map[string]bool)
+	for {
+		reserved := h.reserveNextWork(excluded)
+		if reserved == nil {
+			return
 		}
-	}
-	h.mu.RUnlock()
-	for _, taskID := range taskIDs {
-		h.dispatch(taskID, clientID)
+		reserved.task.transition.Lock()
+		if !h.reservationActive(reserved) {
+			reserved.task.transition.Unlock()
+			continue
+		}
+		message, err := wire.New(wire.TypeTaskAssign, reserved.ref.taskID, reserved.assignment)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err = reserved.connected.send(ctx, message)
+			cancel()
+		}
+		if err != nil {
+			h.rollbackReservedWork(reserved)
+			excluded[reserved.ref.clientID] = true
+			reserved.connected.conn.CloseNow()
+			h.log.Warn("task work dispatch failed", "task_id", reserved.ref.taskID, "client_id", reserved.ref.clientID, "error_type", logsafe.ErrorType(err))
+		}
+		reserved.task.transition.Unlock()
 	}
 }
 
-// dispatch 向一个当前在线且状态仍为 queued 的目标发送 Assignment。
-//
-// 发送前会进入纯内存 assigned 状态，只有 Client 返回 task.ack 后才持久化为
-// running。连接在收到完整任务前断开时仍可在重连后再次派发。发送期间
-// 持有该任务的转换锁，保证
-// 取消帧不会先于旧 Assignment 帧发出；Hub 全局锁仍在网络 I/O 前释放。
-func (h *Hub) dispatch(taskID, clientID string) {
-	h.mu.RLock()
-	task := h.tasks[taskID]
-	h.mu.RUnlock()
-	if task == nil {
-		return
-	}
-	task.transition.Lock()
-	defer task.transition.Unlock()
+func (h *Hub) reserveNextWork(excluded map[string]bool) *reservedWork {
 	h.mu.Lock()
-	connected := h.peers[clientID]
-	if h.tasks[taskID] != task || task.terminalPending || connected == nil || task.targets[clientID] != "queued" {
-		h.mu.Unlock()
+	defer h.mu.Unlock()
+	if len(h.taskOrder) == 0 {
+		return nil
+	}
+	for offset := 0; offset < len(h.taskOrder); offset++ {
+		taskPosition := (h.scheduleNext + offset) % len(h.taskOrder)
+		taskID := h.taskOrder[taskPosition]
+		task := h.tasks[taskID]
+		if task == nil || task.terminalPending {
+			continue
+		}
+		for _, clientID := range task.targetOrder {
+			status := task.targets[clientID]
+			target := task.work[clientID]
+			connected := h.peers[clientID]
+			if excluded[clientID] || connected == nil || target == nil || target.active != nil ||
+				(status != "queued" && status != "running") {
+				continue
+			}
+			if _, busy := h.clientWork[clientID]; busy {
+				continue
+			}
+			proxyID, proxyKey, ok := h.nextUnlockedProxy(task, target)
+			if !ok {
+				continue
+			}
+			workID := model.NewID()
+			ref := workRef{taskID: taskID, clientID: clientID, proxyID: proxyID, workID: workID}
+			target.active = &workLease{ref: ref, proxyKey: proxyKey, state: "assigned"}
+			h.clientWork[clientID] = ref
+			h.proxyWork[proxyKey] = ref
+			if status == "queued" {
+				task.targets[clientID] = "assigned"
+			}
+			proxyPosition := task.proxyIndex[proxyID]
+			assignment := task.assignment
+			assignment.WorkID = workID
+			assignment.ProxyIndex = proxyPosition + 1
+			assignment.ProxyTotal = len(task.assignment.Proxies)
+			assignment.Proxies = []model.ProxySpec{task.assignment.Proxies[proxyPosition]}
+			h.scheduleNext = (taskPosition + 1) % len(h.taskOrder)
+			return &reservedWork{task: task, connected: connected, assignment: assignment, ref: ref}
+		}
+	}
+	return nil
+}
+
+func (h *Hub) nextUnlockedProxy(task *runtimeTask, target *targetWork) (string, [32]byte, bool) {
+	for _, proxyID := range target.order {
+		if _, done := target.completed[proxyID]; done {
+			continue
+		}
+		key := task.proxyKeys[proxyID]
+		if _, locked := h.proxyWork[key]; !locked {
+			return proxyID, key, true
+		}
+	}
+	return "", [32]byte{}, false
+}
+
+func (h *Hub) reservationActive(reserved *reservedWork) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	task := h.tasks[reserved.ref.taskID]
+	if task != reserved.task || task.terminalPending || h.peers[reserved.ref.clientID] != reserved.connected {
+		return false
+	}
+	target := task.work[reserved.ref.clientID]
+	return target != nil && target.active != nil && target.active.ref == reserved.ref
+}
+
+func (h *Hub) rollbackReservedWork(reserved *reservedWork) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	task := h.tasks[reserved.ref.taskID]
+	if task != reserved.task {
 		return
 	}
-	assignment := task.assignment
-	// assigned 预留发送权，并发 dispatchQueued/AddTask 会在上方检查中退出。
-	// 它不写入 SQLite，只有 Client ACK 后才持久化为 running。
-	task.targets[clientID] = "assigned"
-	h.mu.Unlock()
-	message, err := wire.New(wire.TypeTaskAssign, taskID, assignment)
-	if err != nil {
-		h.mu.Lock()
-		if h.tasks[taskID] == task && task.targets[clientID] == "assigned" {
-			task.targets[clientID] = "queued"
-		}
-		h.mu.Unlock()
-		h.log.Warn("encode task assignment failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
+	target := task.work[reserved.ref.clientID]
+	if target == nil || target.active == nil || target.active.ref != reserved.ref {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err = connected.send(ctx, message)
-	cancel()
-	if err != nil {
-		h.mu.Lock()
-		if h.tasks[taskID] == task && task.targets[clientID] == "assigned" {
-			task.targets[clientID] = "queued"
-		}
-		h.mu.Unlock()
-		h.log.Warn("task dispatch failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
+	h.releaseActiveWorkLocked(target)
+	if task.targets[reserved.ref.clientID] == "assigned" {
+		task.targets[reserved.ref.clientID] = "queued"
 	}
+}
+
+func (h *Hub) releaseActiveWorkLocked(target *targetWork) {
+	if target == nil || target.active == nil {
+		return
+	}
+	lease := target.active
+	if current, ok := h.clientWork[lease.ref.clientID]; ok && current == lease.ref {
+		delete(h.clientWork, lease.ref.clientID)
+	}
+	if current, ok := h.proxyWork[lease.proxyKey]; ok && current == lease.ref {
+		delete(h.proxyWork, lease.proxyKey)
+	}
+	target.active = nil
+}
+
+func (h *Hub) releaseTaskWorkLocked(taskID string, task *runtimeTask) {
+	for _, target := range task.work {
+		h.releaseActiveWorkLocked(target)
+	}
+	for index, current := range h.taskOrder {
+		if current == taskID {
+			h.taskOrder = append(h.taskOrder[:index], h.taskOrder[index+1:]...)
+			if len(h.taskOrder) == 0 {
+				h.scheduleNext = 0
+			} else if h.scheduleNext >= len(h.taskOrder) {
+				h.scheduleNext = 0
+			}
+			break
+		}
+	}
+}
+
+func (h *Hub) proxyWorkKey(outbound []byte) [32]byte {
+	digest := hmac.New(sha256.New, h.schedulerKey[:])
+	_, _ = digest.Write(outbound)
+	var key [32]byte
+	copy(key[:], digest.Sum(nil))
+	return key
 }

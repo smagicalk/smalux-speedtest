@@ -126,7 +126,7 @@ func TestReplacedPeerCannotFinishTask(t *testing.T) {
 	current := &peer{client: client}
 	hub.peers[client.ID] = current
 	hub.tasks[task.ID] = &runtimeTask{assignment: testAssignment(task.ID), targets: map[string]string{client.ID: "assigned"}}
-	complete, _ := wire.New(wire.TypeTaskComplete, task.ID, model.Ack{TaskID: task.ID})
+	complete, _ := wire.New(wire.TypeTaskComplete, task.ID, model.Ack{TaskID: task.ID, WorkID: "stale-work"})
 	hub.handleMessage(t.Context(), oldPeer, complete)
 	stored, err := database.GetTask(t.Context(), task.ID)
 	if err != nil || stored.Status != "queued" {

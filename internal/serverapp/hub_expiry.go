@@ -59,6 +59,7 @@ func (h *Hub) expireTask(taskID string) {
 		h.notifyTaskCancellation(context.Background(), taskID, peers)
 	}
 	h.publish(taskID, taskEvent{Type: "status", Status: "failed", Message: expiredTaskDetail})
+	h.schedule()
 }
 
 // persistExpiredTask 调用时必须持有 task.transition。SQLite 先提交完整终态，随后才
@@ -75,6 +76,7 @@ func (h *Hub) persistExpiredTask(ctx context.Context, taskID string, task *runti
 		if task.expires != nil {
 			task.expires.Stop()
 		}
+		h.releaseTaskWorkLocked(taskID, task)
 		model.EraseAssignment(&task.assignment)
 		delete(h.tasks, taskID)
 		removed = true
@@ -111,6 +113,7 @@ func (h *Hub) flushPendingExpiry(ctx context.Context, taskID string) error {
 	}
 	if removed {
 		h.publish(taskID, taskEvent{Type: "status", Status: "failed", Message: expiredTaskDetail})
+		h.schedule()
 	}
 	return nil
 }

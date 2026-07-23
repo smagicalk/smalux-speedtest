@@ -24,25 +24,25 @@ func NewExecutor() *Executor { return &Executor{} }
 // Execute 按 Assignment.Proxies 的顺序执行完整测速任务。
 //
 // 每个代理独立启动和关闭 sing-box。某个代理初始化或获取测速节点失败时，会生成一条
-// 带 Error 的 SpeedResult 并继续下一个代理，避免单个坏节点中止整批任务。ctx 取消后
+// 带 Error 的 SpeedResult 并结束当前工作单元，避免单个坏节点中止整个任务。ctx 取消后
 // 不再开始新代理，已经进入的网络调用也会通过派生 context 尽快终止。
 //
 // progress 用于向调用方报告阶段和实时速率。speedtest-go 的速率回调可能在测速执行
 // 期间频繁触发，因此实现应快速返回，且不应把耗时持久化操作直接放在回调中。
 func (e *Executor) Execute(ctx context.Context, assignment model.Assignment, progress func(model.Progress)) []model.SpeedResult {
 	results := make([]model.SpeedResult, 0, len(assignment.Proxies)*assignment.TopN)
-	for index, proxy := range assignment.Proxies {
+	for _, proxy := range assignment.Proxies {
 		if err := ctx.Err(); err != nil {
 			break
 		}
 		progress(model.Progress{
-			TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "初始化代理",
-			Message: proxy.Protocol, Current: index, Total: len(assignment.Proxies),
+			TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "初始化代理",
+			Message: proxy.Protocol, Current: assignment.ProxyIndex, Total: assignment.ProxyTotal,
 		})
 		proxyResults, err := e.testProxy(ctx, assignment, proxy, progress)
 		if err != nil {
 			results = append(results, model.SpeedResult{
-				TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Protocol: proxy.Protocol,
+				TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name, Protocol: proxy.Protocol,
 				MaskedAddress: model.MaskAddress(proxy.Server, proxy.Port), Error: executionResultError(err), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			})
 			continue
@@ -89,7 +89,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 		speedtest.WithDoer(httpClient),
 	)
 
-	progress(model.Progress{TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "获取测速节点", Message: "Speedtest.net"})
+	progress(model.Progress{TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "获取测速节点", Message: "Speedtest.net"})
 	servers, err := client.FetchServerListContext(ctx)
 	if err != nil {
 		return nil, executionError(errSpeedServerDiscovery, err)
@@ -106,7 +106,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 	available := make(speedtest.Servers, 0, len(servers))
 	for index, server := range servers {
 		progress(model.Progress{
-			TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "延迟检测",
+			TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name, Phase: "延迟检测",
 			Message: server.Name + " / " + server.Sponsor, Current: index + 1, Total: len(servers),
 		})
 		pingCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
@@ -133,7 +133,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 	for index, server := range available[:selected] {
 		started := time.Now()
 		base := model.Progress{
-			TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name,
+			TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name,
 			Message: server.Name + " / " + server.Sponsor, Current: index + 1, Total: selected,
 		}
 		client.SetCallbackDownload(func(rate speedtest.ByteRate) {
@@ -162,7 +162,7 @@ func (e *Executor) testProxy(ctx context.Context, assignment model.Assignment, p
 		cancelUpload()
 
 		result := model.SpeedResult{
-			TaskID: assignment.TaskID, ProxyID: proxy.ID, ProxyName: proxy.Name, Protocol: proxy.Protocol,
+			TaskID: assignment.TaskID, WorkID: assignment.WorkID, ProxyID: proxy.ID, ProxyName: proxy.Name, Protocol: proxy.Protocol,
 			MaskedAddress: model.MaskAddress(proxy.Server, proxy.Port), SpeedServerID: server.ID,
 			SpeedServerName: server.Name, SpeedServerHost: server.Host, Country: server.Country, Sponsor: server.Sponsor,
 			LatencyMS: float64(server.Latency) / float64(time.Millisecond), JitterMS: float64(server.Jitter) / float64(time.Millisecond),

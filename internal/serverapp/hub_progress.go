@@ -20,7 +20,13 @@ func (h *Hub) normalizeProgress(taskID string, connected *peer, input model.Prog
 	}
 	h.mu.RLock()
 	task := h.tasks[taskID]
-	active := h.peers[connected.client.ID] == connected && task != nil && !task.terminalPending && task.targets[connected.client.ID] == "running"
+	var target *targetWork
+	if task != nil {
+		target = task.work[connected.client.ID]
+	}
+	active := h.peers[connected.client.ID] == connected && task != nil && !task.terminalPending &&
+		task.targets[connected.client.ID] == "running" && target != nil && target.active != nil &&
+		target.active.ref.workID == input.WorkID && target.active.ref.proxyID == input.ProxyID && target.active.state == "running"
 	if !active {
 		h.mu.RUnlock()
 		return model.Progress{}, false
@@ -35,7 +41,7 @@ func (h *Hub) normalizeProgress(taskID string, connected *peer, input model.Prog
 	}
 
 	output := model.Progress{
-		TaskID: taskID, ClientID: connected.client.ID, ClientName: connected.client.Name,
+		TaskID: taskID, WorkID: input.WorkID, ClientID: connected.client.ID, ClientName: connected.client.Name,
 		ProxyID: input.ProxyID, ProxyName: identity.name, Phase: input.Phase,
 	}
 	limit := 0

@@ -165,9 +165,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /ws/client", a.hub.ServeWebSocket)
 
 	mux.Handle("GET /", a.requireAdmin(http.HandlerFunc(a.dashboard)))
+	mux.Handle("GET /account", a.requireAdmin(http.HandlerFunc(a.accountPage)))
 	mux.Handle("GET /settings", a.requireAdmin(a.requireOwner(http.HandlerFunc(a.telegramSettingsPage))))
 	mux.Handle("GET /tasks/{id}", a.requireAdmin(http.HandlerFunc(a.taskPage)))
 	mux.Handle("POST /logout", a.requireAdmin(a.csrf(http.HandlerFunc(a.logout))))
+	mux.Handle("POST /api/account/password", a.requireAdmin(a.csrf(http.HandlerFunc(a.changeOwnPassword))))
 	mux.Handle("GET /api/clients", a.requireAdmin(http.HandlerFunc(a.listClients)))
 	mux.Handle("POST /api/clients", a.requireAdmin(a.csrf(http.HandlerFunc(a.createClient))))
 	mux.Handle("PATCH /api/clients/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.updateClient))))

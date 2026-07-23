@@ -101,19 +101,27 @@ func (a *App) startTask(ctx context.Context, input taskRequest) (taskCreation, e
 	return taskCreation{Task: task, ImportErrors: parsed.Errors}, nil
 }
 
-// validateTaskAssignmentSize 用实际 JSON 编码大小对齐 Client 的读限制，而不是用代理
-// 数量或原订阅字节数估算；协议规范化可能让大量短链接显著膨胀。
+// validateTaskAssignmentSize checks the largest single-proxy work unit actually sent
+// by protocol v2. The aggregate subscription may exceed one WebSocket frame because
+// it is retained only in Server memory and dispatched one proxy at a time.
 func validateTaskAssignmentSize(assignment model.Assignment) error {
-	message, err := wire.New(wire.TypeTaskAssign, assignment.TaskID, assignment)
-	if err != nil {
-		return err
-	}
-	size, err := wire.EncodedSize(message)
-	if err != nil {
-		return err
-	}
-	if size > wire.MaxServerToClientMessageBytes {
-		return &taskRequestError{Status: http.StatusRequestEntityTooLarge, Message: "测速批次过大，请拆分后提交"}
+	for index, proxy := range assignment.Proxies {
+		unit := assignment
+		unit.WorkID = "00000000000000000000000000000000"
+		unit.ProxyIndex = index + 1
+		unit.ProxyTotal = len(assignment.Proxies)
+		unit.Proxies = []model.ProxySpec{proxy}
+		message, err := wire.New(wire.TypeTaskAssign, assignment.TaskID, unit)
+		if err != nil {
+			return err
+		}
+		size, err := wire.EncodedSize(message)
+		if err != nil {
+			return err
+		}
+		if size > wire.MaxServerToClientMessageBytes {
+			return &taskRequestError{Status: http.StatusRequestEntityTooLarge, Message: "单个代理配置过大，无法下发"}
+		}
 	}
 	return nil
 }

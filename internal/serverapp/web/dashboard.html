@@ -18,7 +18,7 @@
       <span id="sync-status" class="sync-status" aria-live="polite">等待同步</span>
       <button id="refresh" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
       {{if .IsOwner}}<a class="quiet button-link compact" href="/settings">设置</a>{{end}}
-      <span class="account-chip" title="当前管理员">{{.Username}}</span>
+      <a class="account-chip account-link" href="/account" title="账户安全">{{.Username}}</a>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
     </div>
   </header>

@@ -31,6 +31,7 @@ var (
 	ErrInvalidAdminUsername    = errors.New("invalid administrator username")
 	ErrInvalidAdminPassword    = errors.New("invalid administrator password")
 	ErrInvalidAdminCredentials = errors.New("invalid administrator credentials")
+	ErrAdminPasswordUnchanged  = errors.New("new administrator password matches current password")
 	ErrAdminUsernameTaken      = errors.New("administrator username is already in use")
 	ErrAdminUserNotFound       = errors.New("administrator user not found")
 	ErrAdminUserLastEnabled    = errors.New("cannot disable the last enabled administrator")

@@ -47,7 +47,14 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	connected := &peer{client: client}
 	hub.mu.Lock()
 	hub.peers[client.ID] = connected
-	hub.tasks[taskRecord.ID].targets[client.ID] = "running"
+	runtime := hub.tasks[taskRecord.ID]
+	runtime.targets[client.ID] = "running"
+	workID := model.NewID()
+	ref := workRef{taskID: taskRecord.ID, clientID: client.ID, proxyID: assignment.Proxies[0].ID, workID: workID}
+	key := runtime.proxyKeys[assignment.Proxies[0].ID]
+	runtime.work[client.ID].active = &workLease{ref: ref, proxyKey: key, state: "running"}
+	hub.clientWork[client.ID] = ref
+	hub.proxyWork[key] = ref
 	hub.mu.Unlock()
 	defer func() {
 		hub.mu.Lock()
@@ -59,7 +66,7 @@ func TestSaveResultBindsIdentityAndLimitsRows(t *testing.T) {
 	}()
 
 	base := model.SpeedResult{
-		TaskID: taskRecord.ID, ClientID: client.ID, ProxyID: assignment.Proxies[0].ID,
+		TaskID: taskRecord.ID, WorkID: workID, ClientID: client.ID, ProxyID: assignment.Proxies[0].ID,
 		ProxyName: "spoofed", Protocol: "spoofed", MaskedAddress: "secret.example:443",
 		SpeedServerID: "vless://uuid:password@secret.example:443", SpeedServerName: strings.Repeat("n", 400),
 		SpeedServerHost: "192.0.2.10:443/private/path", Country: `{"password":"private-password"}`,

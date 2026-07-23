@@ -9,7 +9,7 @@ import (
 
 // ProtocolVersion 是 WebSocket 应用层协议版本。客户端和服务端只有在版本一致时才解析
 // 业务载荷；修改不兼容的 Envelope 或 Payload 结构时应递增该值。
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // ProxySpec 是服务端下发给客户端的一条可执行代理配置。
 //
@@ -48,12 +48,17 @@ type ImportResult struct {
 	Errors []ImportError `json:"errors,omitempty"`
 }
 
-// Assignment 是服务端通过 task.assign 下发给某个客户端的完整测速任务。
+// Assignment 是服务端通过 task.assign 下发给某个客户端的单代理工作单元。
 type Assignment struct {
 	// TaskID 是任务全局标识，必须与外层 wire.Envelope.TaskID 一致。
 	TaskID string `json:"task_id"`
-	// Proxies 是需要依次测试的代理；其中 Outbound 含实际连接凭据。
+	// WorkID 标识当前单代理工作单元。Server 只会让一个 Client 同时持有一个 WorkID。
+	WorkID string `json:"work_id"`
+	// Proxies 在协议版本 2 中必须恰好包含一个代理；Outbound 含实际连接凭据。
 	Proxies []ProxySpec `json:"proxies"`
+	// ProxyIndex/ProxyTotal 用于在单代理工作单元中保留整批任务的总体进度。
+	ProxyIndex int `json:"proxy_index"`
+	ProxyTotal int `json:"proxy_total"`
 	// CandidateCount 是每个代理最多进行延迟探测的 Speedtest.net 候选节点数。
 	CandidateCount int `json:"candidate_count"`
 	// TopN 是按延迟升序筛选后实际进行下载、上传测速的节点数。
@@ -68,6 +73,8 @@ type Assignment struct {
 type Progress struct {
 	// TaskID 标识进度所属任务。
 	TaskID string `json:"task_id"`
+	// WorkID 标识当前单代理工作单元。
+	WorkID string `json:"work_id"`
 	// ClientID/ClientName 由 Server 根据已认证连接补充，Client 上报值会被覆盖。
 	ClientID   string `json:"client_id,omitempty"`
 	ClientName string `json:"client_name,omitempty"`
@@ -94,6 +101,8 @@ type Progress struct {
 type SpeedResult struct {
 	// TaskID 标识结果所属任务。
 	TaskID string `json:"task_id"`
+	// WorkID 标识产生本结果的单代理工作单元；仅用于运行态校验，不持久化。
+	WorkID string `json:"work_id,omitempty"`
 	// ClientID 由服务端根据当前认证连接补充，客户端执行器无需自行填写。
 	ClientID string `json:"client_id,omitempty"`
 	// ClientName 是查询结果时关联得到的客户端展示名称。
@@ -156,12 +165,16 @@ type Welcome struct {
 type Ack struct {
 	// TaskID 必须与外层 Envelope.TaskID 一致。
 	TaskID string `json:"task_id"`
+	// WorkID 必须匹配当前连接持有的工作单元。
+	WorkID string `json:"work_id,omitempty"`
 }
 
 // Failure 是 task.failed 的载荷，描述任务未能完整结束的原因。
 type Failure struct {
 	// TaskID 标识失败任务。
 	TaskID string `json:"task_id"`
+	// WorkID 标识失败的工作单元。
+	WorkID string `json:"work_id,omitempty"`
 	// Error 通常来自任务超时、服务端取消或上层 context 取消。
 	Error string `json:"error"`
 }

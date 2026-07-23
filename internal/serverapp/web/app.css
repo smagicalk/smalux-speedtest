@@ -35,6 +35,8 @@ a { color: inherit; }
 .top-actions, .task-actions, .form-actions { display: flex; align-items: center; gap: 8px; }
 .top-actions form { margin: 0; }
 .account-chip { max-width: 180px; overflow: hidden; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: #f9fafb; color: #3f4b51; font-size: .78rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.account-link { text-decoration: none; transition: border-color .15s, background .15s, color .15s; }
+.account-link:hover { border-color: #86b9ad; background: #eff8f5; color: #146b58; }
 .sync-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .78rem; white-space: nowrap; }
 .sync-status::before { width: 7px; height: 7px; border-radius: 50%; background: #aab4b8; content: ""; }
 .sync-status.success::before { background: var(--accent); }
@@ -125,6 +127,10 @@ legend { margin: 0; }
 .form-actions { justify-content: flex-end; margin-top: 18px; }
 .command-field { margin-top: 14px; }
 .settings-workspace { max-width: 1040px; }
+.account-workspace { max-width: 720px; }
+.account-security-section { min-height: 0; }
+.password-form { max-width: 520px; }
+.password-notice { padding: 11px 13px; border-left: 3px solid #62a897; background: #f2f8f6; color: #526269; font-size: .84rem; }
 .settings-panel { display: grid; gap: 18px; }
 .settings-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--line); }
 .settings-details div { min-width: 0; padding: 16px 18px 16px 0; }

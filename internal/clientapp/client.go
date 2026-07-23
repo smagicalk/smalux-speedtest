@@ -169,7 +169,7 @@ func (c *Client) connect(parent context.Context) error {
 		case wire.TypeTaskAssign:
 			assignment, err := wire.Decode[model.Assignment](message)
 			// Envelope 与 Payload 中的 TaskID 必须一致，防止错误关联任务状态。
-			if err == nil && assignment.TaskID == message.TaskID {
+			if err == nil && assignment.TaskID == message.TaskID && assignment.WorkID != "" && len(assignment.Proxies) == 1 {
 				select {
 				case assignments <- assignment:
 				case <-ctx.Done():

@@ -35,8 +35,8 @@ func (h *Hub) handleMessage(ctx context.Context, connected *peer, message wire.E
 		_ = h.store.TouchClient(ctx, connected.client.ID)
 	case wire.TypeTaskAck:
 		ack, err := wire.Decode[model.Ack](message)
-		if err == nil && ack.TaskID == message.TaskID {
-			h.setTargetRunning(ctx, message.TaskID, connected)
+		if err == nil && ack.TaskID == message.TaskID && ack.WorkID != "" {
+			h.setTargetRunning(ctx, message.TaskID, ack.WorkID, connected)
 		}
 	case wire.TypeTaskProgress:
 		// 进度频率较高且只用于实时展示，因此不写入 SQLite；所有展示字段仍需由
@@ -56,14 +56,14 @@ func (h *Hub) handleMessage(ctx context.Context, connected *peer, message wire.E
 		}
 	case wire.TypeTaskComplete:
 		complete, err := wire.Decode[model.Ack](message)
-		if err == nil && complete.TaskID == message.TaskID {
-			h.finishTargetFromPeer(ctx, message.TaskID, connected, "completed", "")
+		if err == nil && complete.TaskID == message.TaskID && complete.WorkID != "" {
+			h.completeWork(ctx, message.TaskID, complete.WorkID, connected)
 		}
 	case wire.TypeTaskFailed:
 		failure, err := wire.Decode[model.Failure](message)
-		if err == nil && failure.TaskID == message.TaskID {
+		if err == nil && failure.TaskID == message.TaskID && failure.WorkID != "" {
 			// Failure.Error 同样来自远程 Client，只接受固定任务失败类别。
-			h.finishTargetFromPeer(ctx, message.TaskID, connected, "failed", model.NormalizeTaskFailure(failure.Error))
+			h.failWork(ctx, message.TaskID, failure.WorkID, connected, model.NormalizeTaskFailure(failure.Error))
 		}
 	}
 }
@@ -72,7 +72,7 @@ func (h *Hub) handleMessage(ctx context.Context, connected *peer, message wire.E
 // 只有 assigned -> running 是有效内存转换（SQLite 中 assigned 仍为 queued）；
 // 重复 ACK、未知任务、非目标 Client 和被替换的旧连接都是幂等空操作。
 // SQLite 转换在任务锁内先提交，内存快照随后更新，避免两者分叉。
-func (h *Hub) setTargetRunning(ctx context.Context, taskID string, connected *peer) {
+func (h *Hub) setTargetRunning(ctx context.Context, taskID, workID string, connected *peer) {
 	clientID := connected.client.ID
 	h.mu.RLock()
 	task := h.tasks[taskID]
@@ -83,33 +83,102 @@ func (h *Hub) setTargetRunning(ctx context.Context, taskID string, connected *pe
 	task.transition.Lock()
 	defer task.transition.Unlock()
 	h.mu.RLock()
-	active := h.tasks[taskID] == task && !task.terminalPending && h.peers[clientID] == connected && task.targets[clientID] == "assigned"
+	target := task.work[clientID]
+	status := task.targets[clientID]
+	active := h.tasks[taskID] == task && !task.terminalPending && h.peers[clientID] == connected &&
+		target != nil && target.active != nil && target.active.ref.workID == workID && target.active.state == "assigned" &&
+		(status == "assigned" || status == "running")
 	h.mu.RUnlock()
 	if !active {
 		return
 	}
-	writeCtx, cancel := hubTransitionContext(ctx)
-	transitioned, err := h.store.StartTarget(writeCtx, taskID, clientID)
-	cancel()
-	if err != nil {
-		h.log.Warn("persist running target failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
-		return
-	}
-	if !transitioned {
-		return
+	started := status == "assigned"
+	if started {
+		writeCtx, cancel := hubTransitionContext(ctx)
+		transitioned, err := h.store.StartTarget(writeCtx, taskID, clientID)
+		cancel()
+		if err != nil {
+			h.log.Warn("persist running target failed", "task_id", taskID, "client_id", clientID, "error_type", logsafe.ErrorType(err))
+			return
+		}
+		if !transitioned {
+			return
+		}
 	}
 	h.mu.Lock()
 	// StartTarget 已提交后必须同步更新内存。peer 可能在 SQLite 写入期间被
 	// 替换/移除，相应 register/unregister 已快照 assigned 并正等待同一把
 	// transition 锁；它会在此处解锁后把 running 的数据库和内存一起退回 queued。
-	if h.tasks[taskID] != task || task.targets[clientID] != "assigned" {
+	target = task.work[clientID]
+	if h.tasks[taskID] != task || target == nil || target.active == nil || target.active.ref.workID != workID || target.active.state != "assigned" {
 		h.mu.Unlock()
 		return
 	}
 	task.targets[clientID] = "running"
+	target.active.state = "running"
 	h.mu.Unlock()
-	h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: "running"})
-	h.publish(taskID, taskEvent{Type: "status", Status: "running"})
+	if started {
+		h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: "running"})
+		h.publish(taskID, taskEvent{Type: "status", Status: "running"})
+	}
+}
+
+// completeWork releases one proxy lease. A Client target reaches completed only after
+// that Client has processed every proxy in the task.
+func (h *Hub) completeWork(ctx context.Context, taskID, workID string, connected *peer) {
+	h.mu.RLock()
+	task := h.tasks[taskID]
+	h.mu.RUnlock()
+	if task == nil {
+		return
+	}
+	task.transition.Lock()
+	h.mu.Lock()
+	target := task.work[connected.client.ID]
+	valid := h.tasks[taskID] == task && !task.terminalPending && h.peers[connected.client.ID] == connected &&
+		task.targets[connected.client.ID] == "running" && target != nil && target.active != nil &&
+		target.active.ref.workID == workID && target.active.state == "running"
+	if !valid {
+		h.mu.Unlock()
+		task.transition.Unlock()
+		return
+	}
+	proxyID := target.active.ref.proxyID
+	target.completed[proxyID] = struct{}{}
+	h.releaseActiveWorkLocked(target)
+	allCompleted := len(target.completed) == len(target.order)
+	h.mu.Unlock()
+	task.transition.Unlock()
+
+	if allCompleted {
+		h.finishTargetFromPeer(ctx, taskID, connected, "completed", "")
+	}
+	h.schedule()
+}
+
+func (h *Hub) failWork(ctx context.Context, taskID, workID string, connected *peer, detail string) {
+	h.mu.RLock()
+	task := h.tasks[taskID]
+	h.mu.RUnlock()
+	if task == nil {
+		return
+	}
+	task.transition.Lock()
+	h.mu.Lock()
+	target := task.work[connected.client.ID]
+	valid := h.tasks[taskID] == task && !task.terminalPending && h.peers[connected.client.ID] == connected &&
+		task.targets[connected.client.ID] == "running" && target != nil && target.active != nil &&
+		target.active.ref.workID == workID && target.active.state == "running"
+	if valid {
+		h.releaseActiveWorkLocked(target)
+	}
+	h.mu.Unlock()
+	task.transition.Unlock()
+	if !valid {
+		return
+	}
+	h.finishTargetFromPeer(ctx, taskID, connected, "failed", detail)
+	h.schedule()
 }
 
 // currentPeer 在消息解码前拒绝已被替换连接的缓冲帧。

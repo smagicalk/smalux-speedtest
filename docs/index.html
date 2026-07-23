@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Smalux Speedtest 分布式代理测速项目文档">
+  <title>Smalux Speedtest · 文档</title>
+  <style>
+    :root { --ink:#172225; --muted:#617074; --line:#dbe4e2; --paper:#f7faf9; --panel:#fff; --teal:#087f72; --teal-dark:#075b54; --orange:#d86d35; --code:#152326; --shadow:0 14px 36px rgba(23,34,37,.08); }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.7 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color:var(--teal-dark); }
+    .shell { display:grid; grid-template-columns:270px minmax(0, 1fr); min-height:100vh; }
+    .sidebar { position:sticky; top:0; height:100vh; padding:30px 22px; border-right:1px solid var(--line); background:#edf5f2; }
+    .brand { display:flex; align-items:center; gap:11px; color:var(--ink); text-decoration:none; font-weight:800; letter-spacing:0; }
+    .mark { display:grid; place-items:center; width:34px; height:34px; border-radius:8px; color:#fff; background:var(--teal); font-size:20px; }
+    .tagline { margin:26px 0 18px; color:var(--muted); font-size:13px; }
+    .nav { display:grid; gap:5px; }
+    .nav a { padding:7px 10px; border-radius:5px; color:#425255; text-decoration:none; font-size:14px; }
+    .nav a:hover, .nav a:focus { color:var(--teal-dark); background:#dcece7; outline:none; }
+    .version { position:absolute; right:22px; bottom:25px; color:#7b8889; font-size:12px; }
+    main { width:min(1040px, 100%); padding:68px clamp(24px, 6vw, 90px) 100px; }
+    .hero { max-width:780px; padding-bottom:35px; }
+    .eyebrow { color:var(--orange); font-size:12px; font-weight:800; letter-spacing:0; }
+    h1, h2, h3 { line-height:1.2; letter-spacing:0; }
+    h1 { margin:12px 0 18px; font-size:52px; }
+    h2 { margin:0 0 18px; padding-top:62px; font-size:29px; scroll-margin-top:20px; }
+    h3 { margin:27px 0 8px; font-size:19px; }
+    p { margin:10px 0 16px; color:#435356; }
+    .lead { max-width:690px; font-size:19px; color:#435356; }
+    .hero-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:25px; }
+    .button { display:inline-flex; align-items:center; min-height:40px; padding:0 15px; border:1px solid var(--teal); border-radius:5px; color:#fff; background:var(--teal); font-weight:700; text-decoration:none; }
+    .button.secondary { color:var(--teal-dark); background:transparent; }
+    .grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin:28px 0 8px; }
+    .card { padding:18px; border:1px solid var(--line); border-radius:7px; background:var(--panel); box-shadow:var(--shadow); }
+    .card strong { display:block; margin-bottom:4px; }
+    .card p { margin:0; font-size:14px; }
+    section { border-top:1px solid var(--line); }
+    .callout { margin:18px 0; padding:14px 17px; border-left:4px solid var(--orange); background:#fff5ed; color:#5d4436; }
+    .callout strong { color:#713b20; }
+    pre { position:relative; overflow:auto; margin:14px 0 20px; padding:18px; border-radius:7px; color:#e7f2ef; background:var(--code); box-shadow:var(--shadow); }
+    code, pre { font:13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    :not(pre) > code { padding:2px 5px; border-radius:3px; color:#075b54; background:#e0efeb; }
+    .copy { position:absolute; top:10px; right:10px; padding:4px 8px; border:1px solid #567477; border-radius:4px; color:#d9ece8; background:transparent; cursor:pointer; font:12px ui-sans-serif, system-ui, sans-serif; }
+    .copy:hover { background:#284347; }
+    table { width:100%; border-collapse:collapse; margin:14px 0 20px; background:#fff; }
+    th, td { padding:10px 12px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { color:#315055; background:#eaf3f0; font-size:14px; }
+    td { color:#4a5a5d; font-size:14px; }
+    ul { padding-left:22px; color:#435356; }
+    footer { margin-top:66px; padding-top:20px; border-top:1px solid var(--line); color:#728083; font-size:13px; }
+    @media (max-width:800px) {
+      .shell { display:block; }
+      .sidebar { position:static; height:auto; padding:18px 20px; border-right:0; border-bottom:1px solid var(--line); }
+      .tagline { margin:14px 0 8px; }
+      .nav { display:flex; overflow:auto; gap:4px; padding-bottom:2px; }
+      .nav a { flex:0 0 auto; white-space:nowrap; }
+      .version { display:none; }
+      main { padding:42px 20px 70px; }
+      .grid { grid-template-columns:1fr; }
+      h1 { font-size:38px; }
+      h2 { padding-top:42px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#top"><span class="mark">S</span><span>Smalux Speedtest</span></a>
+      <p class="tagline">分布式代理测速控制平面与远程执行端</p>
+      <nav class="nav" aria-label="文档导航">
+        <a href="#quick-start">快速开始</a>
+        <a href="#architecture">架构</a>
+        <a href="#scheduler">调度规则</a>
+        <a href="#proxies">代理与任务</a>
+        <a href="#bot">Telegram Bot</a>
+        <a href="#security">安全与隐私</a>
+        <a href="#release">构建发布</a>
+      </nav>
+      <span class="version">protocol v2</span>
+    </aside>
+
+    <main id="top">
+      <header class="hero">
+        <span class="eyebrow">PROJECT DOCUMENTATION</span>
+        <h1>让每个节点都测得有序、可比较</h1>
+        <p class="lead">Smalux Speedtest 将代理配置导入、分布式 Client 执行、实时进度和 PNG 报告集中在一个 Server 控制台中。Server 不保存原始订阅和 sing-box outbound。</p>
+        <div class="hero-actions">
+          <a class="button" href="#quick-start">开始部署</a>
+          <a class="button secondary" href="https://github.com/smagicalk/smalux-speedtest">查看源码</a>
+        </div>
+      </header>
+
+      <div class="grid" aria-label="项目特性">
+        <article class="card"><strong>Server + Client</strong><p>Server 下发任务，Client 在各地执行测速并回传结果。</p></article>
+        <article class="card"><strong>协议 v2 调度</strong><p>单 Client 单工作单元，同一代理全局排他，完整保留矩阵。</p></article>
+        <article class="card"><strong>隐私优先</strong><p>代理凭据只驻留内存，日志和历史结果不包含敏感连接数据。</p></article>
+      </div>
+
+      <section id="quick-start">
+        <h2>快速开始</h2>
+        <p>Server 和 Client 必须使用同一协议版本。Client 需要使用 <code>with_utls</code> 构建，否则 Reality/uTLS 节点无法初始化。</p>
+        <h3>构建</h3>
+        <pre><button class="copy" type="button">复制</button><code>make build
+
+# Windows Client
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+  go build -buildvcs=false -tags with_utls \
+  -o dist/smalux-client-windows-amd64.exe ./client</code></pre>
+        <h3>启动 Server</h3>
+        <pre><button class="copy" type="button">复制</button><code>SMALUX_ADMIN_PASSWORD='change-this-password' \
+  ./dist/smalux-server-linux-amd64 \
+  -listen 0.0.0.0:8080 \
+  -db /var/lib/smalux/smalux.db</code></pre>
+        <p>首次启动默认管理员为 <code>admin</code>。登录控制台后创建 Client。Token 只显示一次，请通过环境变量注入 Client 进程。</p>
+        <h3>启动 Client</h3>
+        <pre><button class="copy" type="button">复制</button><code>SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' \
+  ./dist/smalux-client-linux-amd64 \
+  -server wss://speed.example.com/ws/client</code></pre>
+        <div class="callout"><strong>临时明文连接：</strong>只有在可信内网测试时才启用 Server 的 <code>-allow-insecure-ws</code>。公网部署必须使用 HTTPS/WSS，否则 Token 和测速任务会被网络路径看到。</div>
+        <h3>一键安装服务</h3>
+        <p>Linux 主机可以使用仓库中的 <code>scripts/smalux.sh</code>。脚本从最新 GitHub Release 下载对应架构包并校验 SHA256，然后交互式创建 systemd 服务。</p>
+        <pre><button class="copy" type="button">复制</button><code>curl -fsSL https://raw.githubusercontent.com/smagicalk/smalux-speedtest/main/scripts/smalux.sh -o smalux.sh
+chmod +x smalux.sh
+sudo ./smalux.sh
+
+# 非交互子命令
+sudo ./smalux.sh update
+sudo ./smalux.sh status
+sudo ./smalux.sh uninstall</code></pre>
+      </section>
+
+      <section id="architecture">
+        <h2>架构</h2>
+        <table>
+          <thead><tr><th>模块</th><th>职责</th></tr></thead>
+          <tbody>
+            <tr><td><code>server</code> / <code>internal/serverapp</code></td><td>HTTP 控制台、管理员认证、任务状态、WebSocket Hub、SSE 进度和报告导出。</td></tr>
+            <tr><td><code>client</code> / <code>internal/clientapp</code></td><td>认证连接、接收工作单元、启动 sing-box outbound、延迟/上下行测速。</td></tr>
+            <tr><td><code>internal/importer</code></td><td>解析单条 URI、批量文本、订阅内容和可选 Base64，归一化为 sing-box 配置。</td></tr>
+            <tr><td><code>internal/store</code></td><td>SQLite 持久化管理员、Client 元数据、任务状态和脱敏结果。</td></tr>
+            <tr><td><code>internal/telegrambot</code></td><td>可选 Telegram Bot，负责授权、交互式任务创建和 PNG 回复。</td></tr>
+          </tbody>
+        </table>
+        <p>完整 outbound 只存在于 Server 的运行时任务内存和当前 Client 进程内。任务结束、取消或超时后，服务会清理内存中的代理字节。</p>
+      </section>
+
+      <section id="scheduler">
+        <h2>协议 v2 调度规则</h2>
+        <p>调度器把一个批次拆成多个单代理工作单元，每个工作单元都有唯一 <code>WorkID</code>。Server 为 Client 和代理 outbound 同时建立内存 lease。</p>
+        <ul>
+          <li>一个 Client 同时最多执行一个工作单元，避免本地带宽和 CPU 互相干扰。</li>
+          <li>相同 outbound 的代理在所有活动任务之间全局排他，不会被两个 Client 同时测速。</li>
+          <li>空闲 Client 会立即领取当前未锁定节点；不同节点仍可以在不同 Client 上并行。</li>
+          <li>每个选中的 Client 最终都会测试每个代理，结果仍是完整的 Client × 节点矩阵。</li>
+          <li>完成、失败、取消、超时、撤销 Token、断线和重连都会释放或重建 lease。</li>
+        </ul>
+        <div class="callout"><strong>升级要求：</strong>协议版本从 v1 升级到 v2 后，Server 和所有 Client 必须一起更新。旧 Client 会因版本或工作单元校验失败而拒绝连接。</div>
+      </section>
+
+      <section id="proxies">
+        <h2>代理与测速任务</h2>
+        <p>网页端支持单条、批量文本和订阅导入，订阅内容可额外使用 Base64。支持的协议包括 Shadowsocks、VMess、VLESS、Trojan、SOCKS5、HTTP、SSH、AnyTLS、Hysteria、Hysteria2 和 TUIC。</p>
+        <p>任务参数包括候选测速节点数量、Top N 下载/上传节点和线程数。每个 Client 的任务参数由 Server 下发，Client 命令不需要重复配置这些选项。</p>
+        <p>任务详情页提供实时 SSE 进度、结果表格、CSV 和品牌化 PNG 报告。Bot 创建的任务会编辑同一条进度消息，并在完成后引用原始请求回复图片。</p>
+      </section>
+
+      <section id="bot">
+        <h2>Telegram Bot（可选）</h2>
+        <p>Bot 默认关闭。最高权限管理员在网页的系统设置中绑定 Token 和 Telegram Owner ID，网页会通过验证码确认绑定，不需要把 Bot Token 写入启动命令。</p>
+        <ul>
+          <li>启动后自动注册 Bot 菜单和 inline 按钮。</li>
+          <li>逐步选择代理内容、Client、候选节点、Top N 和线程数。</li>
+          <li>Client 支持分页和多选，已选择项使用绿色实心方块标识，未选择项使用空心方块。</li>
+          <li>只有 Owner 可以授权或撤销 Telegram 用户；普通授权用户只能提交自己的测速任务。</li>
+          <li>Bot Token 使用本地密钥加密保存，日志不输出 Token、消息正文、代理地址或用户 IP。</li>
+        </ul>
+        <table>
+          <thead><tr><th>命令</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>/id</code></td><td>查看 Telegram 用户和会话 ID。</td></tr>
+            <tr><td><code>/authorize USER_ID</code></td><td>Owner 授权用户。</td></tr>
+            <tr><td><code>/revoke USER_ID</code></td><td>Owner 撤销用户。</td></tr>
+            <tr><td><code>/test PROXY_TEXT</code></td><td>提交单条、批量或 Base64 代理内容。</td></tr>
+            <tr><td><code>/sub URL</code></td><td>获取 HTTP(S) 订阅并创建测速任务。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="security">
+        <h2>安全与隐私</h2>
+        <ul>
+          <li>Client Token 只保存哈希；网页创建后只显示一次明文 Token。</li>
+          <li>原始订阅 URL、订阅正文、sing-box outbound、代理密码和私钥不写入 SQLite。</li>
+          <li>历史结果只保留脱敏地址、节点名称、协议、测速节点和测量数据。</li>
+          <li>日志使用固定错误类别，不输出代理配置、请求正文、远端地址和数据库路径。</li>
+          <li>管理员通过邀请码注册；每个管理员可以在账户安全页面修改自己的密码，改密会使其他会话立即失效。</li>
+        </ul>
+        <p>安全边界不能替代网络加密。公共服务建议使用同机 HTTPS/WSS 反向代理，并限制管理控制台访问来源。</p>
+      </section>
+
+      <section id="release">
+        <h2>构建与发布</h2>
+        <p><code>.github/workflows/release.yml</code> 支持三种入口：</p>
+        <ul>
+          <li>推送 <code>main</code>：运行测试并上传六个平台包作为 Actions Artifact。</li>
+          <li>推送 <code>v*</code> Tag：运行测试、编译六个平台、生成 SHA256SUMS 并上传 GitHub Release。</li>
+          <li>手动触发：选择分支/Tag/Commit 和版本；填写 <code>release_tag</code> 时上传到既有 Release，否则只保留测试 Artifact。</li>
+        </ul>
+        <pre><button class="copy" type="button">复制</button><code># 手动验证当前分支的交叉编译
+gh workflow run "Build And Release" \
+  --ref vibe-dev \
+  -f ref=vibe-dev \
+  -f version=dev
+
+# 正式发布
+git tag v1.0.0
+git push origin v1.0.0</code></pre>
+        <footer>文档随源码维护。当前 WebSocket 应用层协议：v2。</footer>
+      </section>
+    </main>
+  </div>
+  <script>
+    document.querySelectorAll('.copy').forEach(button => {
+      button.addEventListener('click', async () => {
+        const code = button.parentElement.querySelector('code').innerText;
+        try {
+          await navigator.clipboard.writeText(code);
+          const original = button.textContent;
+          button.textContent = '已复制';
+          setTimeout(() => { button.textContent = original; }, 1200);
+        } catch (_) {
+          button.textContent = '请手动复制';
+          setTimeout(() => { button.textContent = '复制'; }, 1600);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

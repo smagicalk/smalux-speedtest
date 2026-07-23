@@ -15,7 +15,7 @@
     <a class="brand" href="/"><span class="brand-mark">S</span><strong>Smalux Speedtest</strong></a>
     <div class="top-actions">
       <a class="quiet button-link compact" href="/">返回控制台</a>
-      <span class="account-chip" title="当前管理员">{{.Username}}</span>
+      <a class="account-chip account-link" href="/account" title="账户安全">{{.Username}}</a>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="quiet" type="submit">退出</button></form>
     </div>
   </header>

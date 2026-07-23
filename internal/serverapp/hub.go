@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -62,6 +63,14 @@ type Hub struct {
 	tasks map[string]*runtimeTask
 	// subscribers 按 Task ID 保存 SSE 事件 channel 集合。
 	subscribers map[string]map[chan taskEvent]struct{}
+	// scheduleMu guarantees that only one scheduler loop reserves and writes work at
+	// a time. The maps below remain protected by mu.
+	scheduleMu   sync.Mutex
+	clientWork   map[string]workRef
+	proxyWork    map[[32]byte]workRef
+	taskOrder    []string
+	scheduleNext int
+	schedulerKey [32]byte
 
 	// connectionMu 与 connectionWG 跟踪包括握手阶段在内的全部 WebSocket。
 	// 它们与 mu 分离，使 Shutdown 等待读循环时不占用 Hub 状态锁。
@@ -82,8 +91,11 @@ func NewHub(store *store.Store, logger *slog.Logger, allowInsecure ...bool) *Hub
 		tasks:          make(map[string]*runtimeTask),
 		subscribers:    make(map[string]map[chan taskEvent]struct{}),
 		connections:    make(map[*websocket.Conn]struct{}),
+		clientWork:     make(map[string]workRef),
+		proxyWork:      make(map[[32]byte]workRef),
 		shutdown:       make(chan struct{}),
 	}
+	_, _ = rand.Read(hub.schedulerKey[:])
 	if len(allowInsecure) > 0 {
 		hub.allowInsecureClientWebSocket = allowInsecure[0]
 	}

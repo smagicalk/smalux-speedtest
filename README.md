@@ -2,6 +2,8 @@
 
 Distributed proxy speed testing with a central server and remote clients. The server dispatches one-time proxy configurations over WebSocket; clients test public Speedtest.net endpoints through an embedded sing-box outbound.
 
+Project documentation: [`docs/index.html`](docs/index.html). When GitHub Pages is configured to publish from the branch's `/docs` directory, the same file is the documentation home page.
+
 ## Build
 
 ```bash
@@ -25,7 +27,9 @@ Set the administrator password on the first start. The initial username is `admi
 SMALUX_ADMIN_PASSWORD='change-this-password' go run ./server -listen 127.0.0.1:8080 -db smalux-speedtest.db
 ```
 
-Open `http://127.0.0.1:8080`, log in, create a client, and retain the token shown once. The first `admin` account is the unique highest-privilege administrator and can create, disable, re-enable, and delete additional administrator accounts. Ordinary administrators can see every Client as read-only operational status, but can edit, revoke, and use only the Clients they created; the highest-privilege administrator can manage all Clients. Client display names and labels can be edited from the dashboard without rotating their tokens.
+Open `http://127.0.0.1:8080`, log in, create a client, and retain the token shown once. The first `admin` account is the unique highest-privilege administrator. Instead of assigning passwords to other people, the Owner generates single-use, expiring invitation codes in the dashboard; a recipient chooses their own username and password on the invitation registration page. The Owner can disable, re-enable, and delete additional administrator accounts.
+
+Ordinary administrators can see every Client as read-only operational status, but can edit, revoke, and use only the Clients they created; the highest-privilege administrator can manage all Clients. Client display names and labels can be edited from the dashboard without rotating their tokens. Every administrator can open **Account security** from their username in the top bar and change their own password after confirming the current password. A successful password change immediately invalidates that account's other browser sessions.
 
 Task candidate count, Top N, and thread count use bounded dashboard selectors. Each task can use 1-32 concurrent speedtest connections (4 by default). Completed results can be exported as CSV or as a branded PNG report from the task detail page.
 
@@ -51,7 +55,7 @@ Authorized users may also send proxy text directly without `/test`. A plain `htt
 
 On startup the Bot registers its command menu with Telegram. `/start`, `/help`, and the inline menu expose a guided flow for proxy text or subscription URLs, paginated Client multi-selection, candidate server count, Top N transfer servers, and speedtest threads. Direct proxy text, `/test <text>`, and `/sub <URL>` remain available as default-parameter shortcuts. One control message replies to the original proxy/subscription request and is edited in place through configuration and throttled aggregate/per-Client progress. After the final PNG is sent as a reply to the same request, the temporary control message is removed.
 
-Remote subscription bodies are limited to 5 MiB. The final encoded WebSocket assignment is limited to 2 MiB for protocol-version-1 client compatibility and is checked before a task is stored; split unusually large batches when the server reports that the benchmark batch is too large.
+Remote subscription bodies are limited to 5 MiB. Under protocol version 2, each encoded single-proxy WebSocket work unit is limited to 2 MiB and is checked before a task is stored. The aggregate imported batch may be larger because it remains only in Server memory and is dispatched one proxy at a time.
 
 The authorization list and the acknowledged `getUpdates` offset are stored in SQLite. The offset is committed before processing each update, so a server restart does not replay an already acknowledged high-bandwidth test request; if the process exits in that narrow window, the sender can submit the message again.
 
@@ -69,6 +73,16 @@ SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' go run -tags with_utls ./client \
 `SMALUX_CLIENT_TOKEN` is the preferred token source and takes precedence when it is non-empty. The `-token` flag remains only as a compatibility fallback; command-line secrets may be visible in process listings and should not be used for new deployments.
 
 The Client only needs the Server WebSocket URL and its one-time token. Its display name and labels are maintained in the Server dashboard; task candidate count, transfer-server selection, and thread count are sent with each assignment.
+
+For a Linux systemd installation, run `scripts/smalux.sh` as root. The interactive menu can install or update a Server/Client, show service status, and uninstall while optionally preserving the database; the `start` and `stop` subcommands control service state without changing boot enablement. It detects amd64/arm64, downloads the matching latest Release archive, verifies `SHA256SUMS`, stores service configuration under `/etc/smalux-speedtest`, and never puts the Client Token or administrator password in an `ExecStart` argument.
+
+## Work scheduling
+
+Protocol version 2 dispatches one proxy work unit to each Client at a time. The Server keeps an in-memory lease for both the Client and an ephemeral HMAC fingerprint of the proxy outbound: an idle Client immediately receives another available proxy, while the same proxy is never tested by two Clients concurrently. Every selected Client still tests every proxy, so regional result comparison remains complete. Server and Client must be upgraded together when moving from protocol version 1.
+
+The scheduler applies across all active tasks, not only within one task. A Client lease prevents overlapping speed tests from competing for that machine's bandwidth, while a proxy lease prevents different Clients from testing the same outbound simultaneously. Different available proxies can still run in parallel on different Clients. Work completion, failure, cancellation, timeout, token revocation, disconnect, and connection replacement all release their leases; a reconnect resumes only unfinished proxy units for that Client.
+
+The scheduler and proxy fingerprints are process-local. Raw outbounds and fingerprints are not persisted, and restarting the Server does not reconstruct active work because tasks containing proxy credentials intentionally exist only in memory.
 
 The Server rejects remote plaintext `ws://` Clients by default. For temporary use on a trusted network, start it with `-allow-insecure-ws`; the Client will then authenticate with its Bearer Token over plaintext WebSocket. Public deployments must use WSS because plain WS exposes the Token, assignments, results, packet sizes, timing, and endpoint addresses to the network path.
 

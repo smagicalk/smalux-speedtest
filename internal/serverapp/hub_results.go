@@ -22,7 +22,10 @@ func (h *Hub) saveResult(ctx context.Context, connected *peer, result model.Spee
 	task.transition.Lock()
 	defer task.transition.Unlock()
 	h.mu.RLock()
-	active := h.tasks[result.TaskID] == task && !task.terminalPending && h.peers[result.ClientID] == connected && task.targets[result.ClientID] == "running"
+	target := task.work[result.ClientID]
+	active := h.tasks[result.TaskID] == task && !task.terminalPending && h.peers[result.ClientID] == connected &&
+		task.targets[result.ClientID] == "running" && target != nil && target.active != nil &&
+		target.active.ref.workID == result.WorkID && target.active.ref.proxyID == result.ProxyID && target.active.state == "running"
 	h.mu.RUnlock()
 	if !active {
 		return
@@ -65,7 +68,6 @@ func (h *Hub) finishTargetLocked(ctx context.Context, taskID, clientID string, e
 		return
 	}
 	task.transition.Lock()
-	defer task.transition.Unlock()
 	h.mu.RLock()
 	active := h.tasks[taskID] == task && !task.terminalPending
 	current := task.targets[clientID]
@@ -74,32 +76,41 @@ func (h *Hub) finishTargetLocked(ctx context.Context, taskID, clientID string, e
 	}
 	h.mu.RUnlock()
 	if !active || (expected == nil && current != "queued" && current != "assigned" && current != "running") {
+		task.transition.Unlock()
 		return
 	}
 	writeCtx, cancel := hubTransitionContext(ctx)
 	transition, err := h.store.FinishTarget(writeCtx, taskID, clientID, status, detail)
 	cancel()
 	if err != nil {
+		task.transition.Unlock()
 		h.log.Warn("persist terminal target failed", "task_id", taskID, "client_id", clientID, "status", status, "error_type", logsafe.ErrorType(err))
 		return
 	}
 	removed := false
 	h.mu.Lock()
 	if h.tasks[taskID] == task {
+		h.releaseActiveWorkLocked(task.work[clientID])
 		task.targets[clientID] = transition.TargetStatus
 		if transition.TaskTerminal {
 			if task.expires != nil {
 				task.expires.Stop()
 			}
 			// 覆盖 Outbound 字节并释放全部代理字段，不只等待垃圾回收。
+			h.releaseTaskWorkLocked(taskID, task)
 			model.EraseAssignment(&task.assignment)
 			delete(h.tasks, taskID)
 			removed = true
 		}
 	}
 	h.mu.Unlock()
+	// schedule may reserve another target from this runtimeTask and then acquire
+	// transition while sending it. Release the task lock first to preserve the
+	// scheduler's scheduleMu -> transition lock order.
+	task.transition.Unlock()
 	h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: transition.TargetStatus})
 	if removed {
 		h.publish(taskID, taskEvent{Type: "status", Status: transition.TaskStatus, Message: transition.Detail})
 	}
+	h.schedule()
 }

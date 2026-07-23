@@ -10,7 +10,7 @@ import (
 )
 
 // register 将新连接设为指定 Client 的唯一活动连接。
-// 如果旧连接正在执行任务，相关目标先回退到 queued，以便新连接收到完整任务重新执行；
+// 如果旧连接正在执行任务，相关目标先回退到 queued，以便新连接重新领取当前工作单元；
 // 之后在锁外持久化状态并关闭旧连接，避免 WebSocket I/O 持有 Hub 全局锁。
 func (h *Hub) register(connected *peer) bool {
 	h.connectionMu.Lock()
@@ -101,6 +101,7 @@ func (h *Hub) unregister(connected *peer) {
 	for _, taskID := range requeued {
 		h.requeueTarget(context.Background(), taskID, connected.client.ID, "client disconnected")
 	}
+	h.schedule()
 	// 请求 Context 已随 WebSocket 结束，清理性数据库操作使用独立 Background Context。
 	_ = h.store.TouchClient(context.Background(), connected.client.ID)
 	h.log.Info("client disconnected", "client_id", connected.client.ID)
@@ -143,12 +144,13 @@ func (h *Hub) requeueTarget(ctx context.Context, taskID, clientID, detail string
 	}
 	h.mu.Lock()
 	if h.tasks[taskID] == task && task.targets[clientID] == current {
+		h.releaseActiveWorkLocked(task.work[clientID])
 		task.targets[clientID] = "queued"
 	}
 	h.mu.Unlock()
 	task.transition.Unlock()
-	// 断线窗口内已有新 peer 登记时立即补发；没有在线 peer 时 dispatch 幂等返回。
-	h.dispatch(taskID, clientID)
+	// 断线窗口内已有新 peer 登记时立即参与全局调度。
+	h.schedule()
 }
 
 func targetNeedsRequeue(status string) bool { return status == "assigned" || status == "running" }
