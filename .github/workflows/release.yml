@@ -45,6 +45,7 @@ on:
         options:
           - dev
           - test
+          - release
 
 # Build jobs only need to read the repository. The publish job below requests write
 # access separately and only runs when a real Release target was provided.

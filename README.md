@@ -104,7 +104,7 @@ For temporary trusted-network testing only, start the Server with `-allow-insecu
 
 `.github/workflows/release.yml` runs automatically for pushes to `main` and for `v*` tag pushes. A `main` push builds downloadable Actions artifacts for integration testing. A tag such as `v1.0.0` builds Server and the uTLS-enabled Client for Linux, Windows, and macOS on amd64 and arm64, creates the matching GitHub Release when necessary, then uploads six archives plus `SHA256SUMS`. Publishing a Release from the GitHub UI is also supported.
 
-The same workflow can be started manually from GitHub Actions using dropdowns for the `vibe-dev` or `main` branch, one target operating system (`linux`, `windows`, or `darwin`), one architecture (`amd64` or `arm64`), and the `dev` or `test` package version. Manual validation compiles only that selected target and always keeps the package as a downloadable Actions artifact. Formal Releases are published only by pushing a `v*` tag. All third-party Actions are pinned to full commits.
+The same workflow can be started manually from GitHub Actions using dropdowns for the `vibe-dev` or `main` branch, one target operating system (`linux`, `windows`, or `darwin`), one architecture (`amd64` or `arm64`), and the `dev`, `test`, or `release` package version. Manual validation compiles only that selected target and always keeps the package as a downloadable Actions artifact. Formal Releases are published only by pushing a `v*` tag. All third-party Actions are pinned to full commits.
 
 ## Source layout
 
