@@ -161,7 +161,25 @@ sudo ./smalux.sh uninstall</code></pre>
 
       <section id="proxies">
         <h2>代理与测速任务</h2>
-        <p>网页端支持单条、批量文本和订阅导入，订阅内容可额外使用 Base64。支持的协议包括 Shadowsocks、VMess、VLESS、Trojan、SOCKS5、HTTP、SSH、AnyTLS、Hysteria、Hysteria2 和 TUIC。</p>
+        <p>网页端支持单条、批量文本和订阅导入，订阅正文可额外使用 Base64。导入器和正式 Client 当前支持以下 11 类分享链接：</p>
+        <table>
+          <thead><tr><th>协议</th><th>URI / 格式</th><th>已支持能力</th></tr></thead>
+          <tbody>
+            <tr><td>Shadowsocks</td><td><code>ss://</code></td><td>SIP002 Base64、明文百分号转义、旧式整段 Base64 和插件参数。</td></tr>
+            <tr><td>VMess</td><td><code>vmess://Base64(JSON)</code></td><td>加密方式、alter ID、packet encoding、TLS/uTLS 和 V2Ray transport。</td></tr>
+            <tr><td>VLESS</td><td><code>vless://</code></td><td>Flow、packet encoding、TLS/uTLS、Reality 和 V2Ray transport。</td></tr>
+            <tr><td>Trojan</td><td><code>trojan://</code></td><td>默认启用 TLS，支持 TLS/uTLS 和 V2Ray transport。</td></tr>
+            <tr><td>SOCKS5</td><td><code>socks://</code>、<code>socks5://</code></td><td>可选用户名和密码；两种 scheme 均转换为 SOCKS5。</td></tr>
+            <tr><td>HTTP 代理</td><td><code>http://</code>、<code>https://</code></td><td>可选用户名和密码；HTTPS 表示连接上游代理时启用 TLS。</td></tr>
+            <tr><td>SSH</td><td><code>ssh://</code></td><td>用户名和密码认证。</td></tr>
+            <tr><td>AnyTLS</td><td><code>anytls://</code></td><td>密码认证和强制 TLS。</td></tr>
+            <tr><td>Hysteria v1</td><td><code>hysteria://</code></td><td>认证、必填上下行带宽、XPlus 混淆、TLS 和端口跳跃。</td></tr>
+            <tr><td>Hysteria2</td><td><code>hysteria2://</code>、<code>hy2://</code></td><td>密码、可选带宽、Salamander 类混淆、TLS 和端口跳跃。</td></tr>
+            <tr><td>TUIC</td><td><code>tuic://</code></td><td>UUID/密码、TLS、拥塞控制和 UDP relay mode。</td></tr>
+          </tbody>
+        </table>
+        <p>VMess、VLESS 和 Trojan 的 V2Ray transport 支持默认 TCP（省略或使用 <code>tcp</code>、<code>raw</code>、<code>none</code>）、WebSocket、gRPC、HTTP/H2 和 HTTPUpgrade。其他 transport 会在导入阶段被拒绝，不会静默退化成 TCP；正式 Client 当前不启用 KCP 和 V2Ray QUIC。这不影响使用独立原生 QUIC 实现的 Hysteria、Hysteria2 与 TUIC。</p>
+        <div class="callout"><strong>不支持：</strong>SSR 已被 sing-box 1.13 移除；Naive 会引入体积较大的多平台 Cronet 运行库，因此项目有意不注册。其他未列出的 URI 会返回协议不支持。</div>
         <p>任务参数包括候选测速节点数量、Top N 下载/上传节点和线程数。每个 Client 的任务参数由 Server 下发，Client 命令不需要重复配置这些选项。</p>
         <p>任务详情页提供实时 SSE 进度、结果表格、CSV 和品牌化 PNG 报告。Bot 创建的任务会编辑同一条进度消息，并在完成后引用原始请求回复图片。</p>
       </section>

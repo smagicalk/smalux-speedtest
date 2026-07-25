@@ -86,7 +86,27 @@ The scheduler and proxy fingerprints are process-local. Raw outbounds and finger
 
 The Server rejects remote plaintext `ws://` Clients by default. For temporary use on a trusted network, start it with `-allow-insecure-ws`; the Client will then authenticate with its Bearer Token over plaintext WebSocket. Public deployments must use WSS because plain WS exposes the Token, assignments, results, packet sizes, timing, and endpoint addresses to the network path.
 
-Supported URI families are Shadowsocks, VMess, VLESS, Trojan, SOCKS5, HTTP, SSH, AnyTLS, Hysteria, Hysteria2 and TUIC. Naive is intentionally excluded because sing-box embeds large per-platform Cronet libraries for that outbound.
+## Supported proxy protocols
+
+The importer and the production Client currently support these 11 share-link families:
+
+| Protocol | Accepted URI schemes/formats | Imported features and notes |
+| --- | --- | --- |
+| Shadowsocks | `ss://` | SIP002 Base64 or percent-encoded plain credentials, legacy whole-authority Base64, and `plugin` options |
+| VMess | `vmess://Base64(JSON)` | Security/alter ID, packet encoding, TLS/uTLS, and the V2Ray transports listed below |
+| VLESS | `vless://` | Flow, packet encoding, TLS/uTLS, Reality, and the V2Ray transports listed below |
+| Trojan | `trojan://` | TLS by default, TLS/uTLS, and the V2Ray transports listed below |
+| SOCKS5 | `socks://`, `socks5://` | Optional username/password authentication; both schemes become SOCKS version 5 |
+| HTTP proxy | `http://`, `https://` | Optional username/password; `https://` enables TLS to the upstream proxy |
+| SSH | `ssh://` | Username/password authentication |
+| AnyTLS | `anytls://` | Password authentication and mandatory TLS |
+| Hysteria v1 | `hysteria://` | Auth, required upload/download bandwidth, XPlus obfuscation, TLS, and port hopping |
+| Hysteria2 | `hysteria2://`, `hy2://` | Password, optional bandwidth, Salamander-style obfuscation, TLS, and port hopping |
+| TUIC | `tuic://` | UUID/password, TLS, congestion control, and UDP relay mode |
+
+For VMess, VLESS, and Trojan, supported V2Ray transports are default TCP (`tcp`, `raw`, `none`, or omitted), WebSocket, gRPC, HTTP/H2, and HTTPUpgrade. Unsupported transports are rejected during import instead of silently falling back to TCP. In particular, KCP and V2Ray QUIC are not enabled by the production Client build. This does not affect Hysteria, Hysteria2, or TUIC, whose native QUIC implementations are registered separately.
+
+SSR is rejected because support was removed from sing-box 1.13. Naive is intentionally excluded because sing-box embeds large per-platform Cronet libraries for that outbound. Other URI families are reported as unsupported.
 
 ## Privacy boundary
 
