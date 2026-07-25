@@ -30,6 +30,7 @@ func parseShadowsocks(link string) (model.ProxySpec, error) {
 		query = rest[index+1:]
 		rest = rest[:index]
 	}
+	credentialEncoded := false
 	// 没有 @ 表示整段 authority 使用旧式 Base64 编码。
 	if !strings.Contains(rest, "@") {
 		decoded, err := decodeBase64(rest)
@@ -37,6 +38,7 @@ func parseShadowsocks(link string) (model.ProxySpec, error) {
 			return model.ProxySpec{}, errors.New("invalid shadowsocks credential")
 		}
 		rest = decoded
+		credentialEncoded = true
 	}
 	parts := strings.SplitN(rest, "@", 2)
 	if len(parts) != 2 {
@@ -46,9 +48,24 @@ func parseShadowsocks(link string) (model.ProxySpec, error) {
 	// SIP002 推荐仅 Base64 编码 userinfo；若解码失败则兼容明文 method:password。
 	if decoded, err := decodeBase64(credential); err == nil && strings.Contains(decoded, ":") {
 		credential = decoded
+		credentialEncoded = true
 	}
 	credentialParts := strings.SplitN(credential, ":", 2)
 	if len(credentialParts) != 2 {
+		return model.ProxySpec{}, errors.New("invalid shadowsocks method/password")
+	}
+	method, password := credentialParts[0], credentialParts[1]
+	// Percent encoding belongs to plain SIP002 userinfo. Once credentials have
+	// been decoded from Base64, '%' is literal password data and must stay intact.
+	if !credentialEncoded {
+		var methodErr, passwordErr error
+		method, methodErr = url.PathUnescape(method)
+		password, passwordErr = url.PathUnescape(password)
+		if methodErr != nil || passwordErr != nil {
+			return model.ProxySpec{}, errors.New("invalid shadowsocks method/password")
+		}
+	}
+	if method == "" {
 		return model.ProxySpec{}, errors.New("invalid shadowsocks method/password")
 	}
 	// 借助 net/url 正确处理域名、端口和带方括号的 IPv6 地址。
@@ -62,7 +79,7 @@ func parseShadowsocks(link string) (model.ProxySpec, error) {
 	}
 	outbound := map[string]any{
 		"type": "shadowsocks", "tag": "proxy", "server": hostURL.Hostname(), "server_port": port,
-		"method": credentialParts[0], "password": credentialParts[1],
+		"method": method, "password": password,
 	}
 	values, _ := url.ParseQuery(query)
 	if plugin := values.Get("plugin"); plugin != "" {

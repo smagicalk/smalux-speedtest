@@ -7,11 +7,14 @@ import (
 )
 
 // applyV2Ray 将 VLESS、Trojan、VMess 共用的 TLS 与传输层参数写入 outbound。
-// 未识别或空 type 表示使用协议默认 TCP，不额外生成 transport，避免无意义配置改变行为。
-func applyV2Ray(outbound map[string]any, q url.Values) {
+// 空 type 或显式 tcp/raw/none 使用协议默认 TCP；其他未识别值直接报错，避免把
+// 实际不支持的分享链接静默降级成裸 TCP。
+func applyV2Ray(outbound map[string]any, q url.Values) error {
 	applyTLS(outbound, q, fmt.Sprint(outbound["server"]), false)
 	typeName := strings.ToLower(q.Get("type"))
 	switch typeName {
+	case "", "tcp", "raw", "none":
+		return nil
 	case "ws", "websocket":
 		// WebSocket Host 是 HTTP 请求头，而 path 是 transport 顶层字段。
 		headers := map[string]any{}
@@ -19,13 +22,19 @@ func applyV2Ray(outbound map[string]any, q url.Values) {
 			headers["Host"] = host
 		}
 		transport := map[string]any{"type": "ws", "path": q.Get("path")}
+		// v2rayN/Xray share links use ed/eh for WebSocket early data. Preserve
+		// both values using sing-box's native field names when they are valid.
+		putInt(transport, "max_early_data", first(q, "ed", "max_early_data"))
+		put(transport, "early_data_header_name", first(q, "eh", "early_data_header_name"))
 		if len(headers) > 0 {
 			transport["headers"] = headers
 		}
 		outbound["transport"] = transport
+		return nil
 	case "grpc":
 		// 同时兼容分享生态中的 serviceName 与 sing-box 风格 service_name。
 		outbound["transport"] = map[string]any{"type": "grpc", "service_name": first(q, "serviceName", "service_name")}
+		return nil
 	case "http", "h2":
 		// HTTP transport 的 host 是列表；分享链接通常以逗号编码多个候选值。
 		transport := map[string]any{"type": "http", "path": q.Get("path")}
@@ -33,10 +42,14 @@ func applyV2Ray(outbound map[string]any, q url.Values) {
 			transport["host"] = strings.Split(host, ",")
 		}
 		outbound["transport"] = transport
+		return nil
 	case "httpupgrade":
 		transport := map[string]any{"type": "httpupgrade", "path": q.Get("path")}
 		put(transport, "host", q.Get("host"))
 		outbound["transport"] = transport
+		return nil
+	default:
+		return fmt.Errorf("unsupported transport type %q", typeName)
 	}
 }
 

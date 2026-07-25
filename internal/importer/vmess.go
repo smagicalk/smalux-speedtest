@@ -39,6 +39,7 @@ func parseVMess(link string) (model.ProxySpec, error) {
 	if alterID, err := strconv.Atoi(stringValue(source["aid"])); err == nil && alterID != 0 {
 		outbound["alter_id"] = alterID
 	}
+	put(outbound, "packet_encoding", firstStringValue(source, "packetEncoding", "packet_encoding"))
 	// 将旧 VMess JSON 键转换成与 VLESS/Trojan 分享链接相同的查询参数视图，避免
 	// WebSocket、gRPC、HTTP transport 与 TLS 映射出现两套实现。
 	q := make(url.Values)
@@ -48,11 +49,27 @@ func parseVMess(link string) (model.ProxySpec, error) {
 	q.Set("security", stringValue(source["tls"]))
 	q.Set("sni", stringValue(source["sni"]))
 	q.Set("fp", stringValue(source["fp"]))
-	applyV2Ray(outbound, q)
+	q.Set("serviceName", firstStringValue(source, "serviceName", "service_name"))
+	q.Set("ed", firstStringValue(source, "ed", "max_early_data"))
+	q.Set("eh", firstStringValue(source, "eh", "early_data_header_name"))
+	if err := applyV2Ray(outbound, q); err != nil {
+		return model.ProxySpec{}, err
+	}
 	name := stringValue(source["ps"])
 	if name == "" {
 		// ps 为空时不能用真实服务器地址生成持久化名称。
 		name = "vmess-node"
 	}
 	return makeSpec(name, "vmess", server, uint16(port64), outbound)
+}
+
+// firstStringValue returns the first non-empty VMess JSON value among aliases.
+// Newer generators use camelCase while sing-box-native exports use snake_case.
+func firstStringValue(source map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringValue(source[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -49,6 +49,20 @@ func TestParseVLESSRealityWebSocket(t *testing.T) {
 	}
 }
 
+func TestParseVLESSPacketEncoding(t *testing.T) {
+	proxy, err := ParseLink("vless://00000000-0000-0000-0000-000000000001@example.com:443?packetEncoding=xudp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outbound map[string]any
+	if err := json.Unmarshal(proxy.Outbound, &outbound); err != nil {
+		t.Fatal(err)
+	}
+	if outbound["packet_encoding"] != "xudp" {
+		t.Fatalf("packet_encoding=%v, want xudp", outbound["packet_encoding"])
+	}
+}
+
 // TestParseVMessAndBase64Subscription 验证双层 Base64 不混淆、单行错误不阻断
 // 有效节点，以及错误行号对应解码后订阅的第二行。
 func TestParseVMessAndBase64Subscription(t *testing.T) {

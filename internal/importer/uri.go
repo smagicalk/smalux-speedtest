@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"smalux-speedtest/internal/model"
@@ -57,7 +58,13 @@ func ParseLink(link string) (model.ProxySpec, error) {
 		outbound["type"] = "vless"
 		outbound["uuid"] = username(u)
 		put(outbound, "flow", q.Get("flow"))
-		applyV2Ray(outbound, q)
+		// VLESS clients commonly spell this option packetEncoding. Keep the
+		// sing-box packet_encoding field when present; it is relevant to UDP
+		// packet mode and harmless for the TCP-based Speedtest requests.
+		put(outbound, "packet_encoding", first(q, "packetEncoding", "packet_encoding"))
+		if err := applyV2Ray(outbound, q); err != nil {
+			return model.ProxySpec{}, err
+		}
 	case "trojan":
 		// Trojan 分享链接通常省略 security=tls，但协议默认要求 TLS，因此主动补齐。
 		outbound["type"] = "trojan"
@@ -65,21 +72,48 @@ func ParseLink(link string) (model.ProxySpec, error) {
 		if q.Get("security") == "" {
 			q.Set("security", "tls")
 		}
-		applyV2Ray(outbound, q)
+		if err := applyV2Ray(outbound, q); err != nil {
+			return model.ProxySpec{}, err
+		}
 	case "hysteria", "hysteria2", "hy2":
 		// hy2 是 hysteria2 的常见别名；两个协议在 sing-box 中的认证和混淆结构不同。
 		if scheme == "hysteria" {
 			outbound["type"] = "hysteria"
-			outbound["auth_str"] = username(u)
+			auth := username(u)
+			if queryAuth := first(q, "auth", "auth_str"); queryAuth != "" {
+				auth = queryAuth
+			}
+			outbound["auth_str"] = auth
 			putInt(outbound, "up_mbps", first(q, "upmbps", "up"))
 			putInt(outbound, "down_mbps", first(q, "downmbps", "down"))
-			put(outbound, "obfs", q.Get("obfs"))
+			if _, upOK := outbound["up_mbps"]; !upOK {
+				return model.ProxySpec{}, errors.New("hysteria upload speed is invalid")
+			}
+			if _, downOK := outbound["down_mbps"]; !downOK {
+				return model.ProxySpec{}, errors.New("hysteria download speed is invalid")
+			}
+			// Hysteria v1 links commonly use obfs=xplus&obfsParam=secret,
+			// while sing-box expects only the XPlus password in obfs.
+			obfs := first(q, "obfsParam", "obfs-param", "obfs_password")
+			if obfs == "" && !strings.EqualFold(q.Get("obfs"), "xplus") {
+				obfs = q.Get("obfs")
+			}
+			put(outbound, "obfs", obfs)
 		} else {
 			outbound["type"] = "hysteria2"
-			outbound["password"] = username(u)
+			password := username(u)
+			if queryPassword := first(q, "auth", "password"); queryPassword != "" {
+				password = queryPassword
+			}
+			outbound["password"] = password
+			putInt(outbound, "up_mbps", first(q, "upmbps", "up"))
+			putInt(outbound, "down_mbps", first(q, "downmbps", "down"))
 			if q.Get("obfs") != "" {
 				outbound["obfs"] = map[string]any{"type": q.Get("obfs"), "password": first(q, "obfs-password", "obfs_password")}
 			}
+		}
+		if err := applyHysteriaPortHopping(outbound, q); err != nil {
+			return model.ProxySpec{}, err
 		}
 		// Hysteria 系列本身依赖 TLS，所以即使链接未写 security 也强制生成 TLS 配置。
 		applyTLS(outbound, q, u.Hostname(), true)
@@ -126,4 +160,35 @@ func ParseLink(link string) (model.ProxySpec, error) {
 		}
 	}
 	return makeSpec(name, fmt.Sprint(outbound["type"]), u.Hostname(), port, outbound)
+}
+
+// applyHysteriaPortHopping maps the common URI aliases used by Hysteria v1/v2
+// clients to sing-box's server_ports and hop_interval fields.
+func applyHysteriaPortHopping(outbound map[string]any, q url.Values) error {
+	if ports := first(q, "mport", "ports", "server_ports"); ports != "" {
+		parts := strings.Split(ports, ",")
+		cleaned := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			separator := strings.IndexAny(part, "-:")
+			startText, endText := part, part
+			if separator >= 0 {
+				startText, endText = part[:separator], part[separator+1:]
+			}
+			start, startErr := strconv.ParseUint(startText, 10, 16)
+			end, endErr := strconv.ParseUint(endText, 10, 16)
+			if startErr != nil || endErr != nil || start == 0 || end == 0 || start > end {
+				return errors.New("hysteria port range is invalid")
+			}
+			cleaned = append(cleaned, strconv.FormatUint(start, 10)+":"+strconv.FormatUint(end, 10))
+		}
+		if len(cleaned) > 0 {
+			outbound["server_ports"] = cleaned
+		}
+	}
+	put(outbound, "hop_interval", first(q, "hop_interval", "hop-interval"))
+	return nil
 }
