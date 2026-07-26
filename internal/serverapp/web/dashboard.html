@@ -69,10 +69,17 @@
               <label class="field"><span>上下行节点</span><select name="top_n"><option value="1">Top 1</option><option value="2">Top 2</option><option value="3" selected>Top 3</option></select></label>
               <label class="field"><span>线程</span><select name="threads" required><option value="1">1</option><option value="4" selected>4</option><option value="8">8</option><option value="16">16</option><option value="32">32</option></select></label>
             </div>
+          </div>
+          <div class="task-target-pane">
             <fieldset>
-              <div class="field-label selection-heading"><legend>目标 Client</legend><span id="selected-client-count" class="field-meta">0 个已选择</span></div>
-              <div class="selection-toolbar"><span class="input-hint">离线节点重连后会自动接收任务。</span><div class="selection-actions"><button id="select-online" class="quiet compact" type="button">选在线</button><button id="select-all" class="quiet compact" type="button">全选</button><button id="clear-selection" class="quiet compact" type="button">清空</button></div></div>
-              <div id="client-options" class="check-grid"><span class="muted">暂无 Client</span></div>
+              <div class="field-label selection-heading"><legend>目标 Client</legend><span id="selected-client-count" class="field-meta" aria-live="polite">0 个已选择</span></div>
+              <div class="client-filter-toolbar">
+                <label class="filter-field"><span>标签分组</span><select id="client-group-filter"><option value="all">全部分组</option></select></label>
+                <label class="filter-field client-filter-search"><span>搜索</span><input id="client-search-filter" type="search" placeholder="名称或标签"></label>
+                <span id="visible-client-count" class="field-meta" aria-live="polite">0 个 Client</span>
+              </div>
+              <div class="selection-toolbar"><span class="input-hint">筛选来自 Client 标签；离线节点重连后会自动接收任务。</span><div class="selection-actions"><button id="select-online" class="quiet compact" type="button">选当前在线</button><button id="select-all" class="quiet compact" type="button">全选当前</button><button id="clear-selection" class="quiet compact" type="button">全部清空</button></div></div>
+              <div id="client-options" class="check-grid client-target-grid"><span class="muted">暂无 Client</span></div>
             </fieldset>
             <div id="task-error" class="alert error hidden"></div>
             <div class="form-actions task-submit"><button class="primary" type="submit">创建任务</button></div>

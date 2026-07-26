@@ -8,6 +8,8 @@ let clients = [];
 let tasks = [];
 let refreshInFlight = null;
 let clientsLoadInFlight = null;
+let selectedClients = new Set();
+let clientSelectionInitialized = false;
 
 // api 统一处理管理端 JSON API 的请求头、会话失效和错误格式。
 const api = async (url, options = {}) => {
@@ -41,7 +43,7 @@ function setSyncStatus(state, text) {
 }
 
 function selectedClientIDs() {
-  return new Set([...document.querySelectorAll('#client-options input[name="client_id"]:checked:not(:disabled)')].map(input => input.value));
+  return new Set(selectedClients);
 }
 
 function updateSelectionSummary() {
@@ -52,21 +54,77 @@ function updateSelectionSummary() {
   if (submit && !submit.disabled) submit.title = selected.size ? '' : '请至少选择一个 Client';
 }
 
-// Client 选项在轮询时重新绘制，但始终保留管理员已经勾选的 ID；首次加载自动选中在线节点。
-function renderClientOptions(previousSelection, firstRender) {
+function clientGroupValue(key, value) {
+  return `label:${JSON.stringify([key, value])}`;
+}
+
+// 所有标签键值都可以直接作为分组，不要求管理员预先约定某个固定 label key。
+function syncClientGroups(available) {
+  const filter = $('#client-group-filter');
+  const previous = filter.value;
+  const groups = new Map();
+  let ungroupedCount = 0;
+  available.forEach(item => {
+    const labels = Object.entries(item.labels || {});
+    if (!labels.length) ungroupedCount++;
+    labels.forEach(([key, value]) => {
+      const groupValue = clientGroupValue(key, value);
+      const group = groups.get(groupValue) || {label: `${key}=${value}`, count: 0};
+      group.count++;
+      groups.set(groupValue, group);
+    });
+  });
+  const options = [
+    new Option(`全部分组 (${available.length})`, 'all'),
+    new Option(`未分组 (${ungroupedCount})`, 'ungrouped'),
+  ];
+  [...groups.entries()].sort((left, right) => left[1].label.localeCompare(right[1].label, 'zh-CN')).forEach(([value, group]) => {
+    options.push(new Option(`${group.label} (${group.count})`, value));
+  });
+  filter.replaceChildren(...options);
+  filter.value = [...filter.options].some(option => option.value === previous) ? previous : 'all';
+}
+
+function filteredClients(available) {
+  const group = $('#client-group-filter').value;
+  const search = $('#client-search-filter').value.trim().toLocaleLowerCase('zh-CN');
+  let labelGroup = null;
+  if (group.startsWith('label:')) {
+    try { labelGroup = JSON.parse(group.slice(6)); } catch (_) { labelGroup = null; }
+  }
+  return available.filter(item => {
+    const labels = Object.entries(item.labels || {});
+    const matchesGroup = group === 'all' || (group === 'ungrouped' && labels.length === 0) ||
+      (labelGroup && item.labels?.[labelGroup[0]] === labelGroup[1]);
+    const searchable = [item.name, ...labels.flatMap(([key, value]) => [key, value, `${key}=${value}`])].join(' ').toLocaleLowerCase('zh-CN');
+    return matchesGroup && (!search || searchable.includes(search));
+  });
+}
+
+// Client 选项在轮询和筛选时重新绘制，但选择状态独立保存；隐藏其他分组不会丢失勾选。
+function renderClientOptions({syncGroups = false} = {}) {
   const available = clients.filter(item => item.enabled);
+  const selectable = new Set(available.filter(item => item.manageable).map(item => item.id));
+  selectedClients = new Set([...selectedClients].filter(id => selectable.has(id)));
   if (!available.length) {
+    if (syncGroups) syncClientGroups(available);
     $('#client-options').innerHTML = '<span class="muted">暂无可用 Client</span>';
+    $('#visible-client-count').textContent = '0 个 Client';
     updateSelectionSummary();
     return;
   }
-  const selected = new Set(previousSelection);
-  if (firstRender && selected.size === 0) available.filter(item => item.online && item.manageable).forEach(item => selected.add(item.id));
-  $('#client-options').innerHTML = available.map(item => `
+  if (!clientSelectionInitialized) {
+    available.filter(item => item.online && item.manageable).forEach(item => selectedClients.add(item.id));
+    clientSelectionInitialized = true;
+  }
+  if (syncGroups) syncClientGroups(available);
+  const visible = filteredClients(available);
+  $('#visible-client-count').textContent = `${visible.length} 个 Client`;
+  $('#client-options').innerHTML = visible.length ? visible.map(item => `
     <label class="check-option ${item.online ? '' : 'offline'} ${item.manageable ? '' : 'readonly'}">
-      <input type="checkbox" name="client_id" value="${escapeHTML(item.id)}" ${selected.has(item.id) && item.manageable ? 'checked' : ''} ${item.manageable ? '' : 'disabled'}>
+      <input type="checkbox" name="client_id" value="${escapeHTML(item.id)}" ${selectedClients.has(item.id) && item.manageable ? 'checked' : ''} ${item.manageable ? '' : 'disabled'}>
       <span>${escapeHTML(item.name)}</span><span class="client-state ${item.online ? 'online' : ''}">${item.online ? '在线' : '离线'}${item.manageable ? '' : ' · 只读'}</span>
-    </label>`).join('');
+    </label>`).join('') : '<span class="muted">没有匹配的 Client</span>';
   updateSelectionSummary();
 }
 
@@ -83,11 +141,8 @@ async function loadClients({force = false} = {}) {
     return loadClients();
   }
   const request = (async () => {
-    const firstRender = !$('#client-options input[name="client_id"]');
     const nextClients = await api('/api/clients');
     clients = Array.isArray(nextClients) ? nextClients : [];
-    // 在请求期间管理员可能已经勾选或清空节点；响应返回后再读取 DOM，避免覆盖刚完成的操作。
-    const previousSelection = selectedClientIDs();
     $('#online-count').textContent = clients.filter(item => item.online).length;
     $('#client-count').textContent = clients.length;
     $('#clients-body').innerHTML = clients.length ? clients.map(item => `
@@ -100,7 +155,7 @@ async function loadClients({force = false} = {}) {
         <td>${dateText(item.last_seen)}</td>
         <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button">编辑</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" title="永久吊销 Token" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
       </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无 Client</td></tr>';
-    renderClientOptions(previousSelection, firstRender);
+    renderClientOptions({syncGroups: true});
     return clients;
   })();
   clientsLoadInFlight = request;
@@ -167,22 +222,29 @@ document.querySelectorAll('.close-dialog').forEach(button => button.addEventList
 document.querySelectorAll('.close-token').forEach(button => button.addEventListener('click', () => $('#token-dialog').close()));
 document.querySelectorAll('.close-edit-client').forEach(button => button.addEventListener('click', () => $('#edit-client-dialog').close()));
 
-// Client 选择工具栏减少大量节点时的重复点击，并在每次勾选后即时显示数量。
-$('#client-options').addEventListener('change', updateSelectionSummary);
-$('#select-online').addEventListener('click', () => {
-  document.querySelectorAll('#client-options input[name="client_id"]').forEach(input => {
-    const client = clients.find(item => item.id === input.value);
-    input.checked = !input.disabled && Boolean(client?.online);
-  });
+// Client 选择状态不依赖当前过滤结果；切换分组时其他分组的勾选仍会随任务提交。
+$('#client-options').addEventListener('change', event => {
+  const input = event.target.closest('input[name="client_id"]');
+  if (!input || input.disabled) return;
+  if (input.checked) selectedClients.add(input.value); else selectedClients.delete(input.value);
   updateSelectionSummary();
+});
+$('#client-group-filter').addEventListener('change', () => renderClientOptions());
+$('#client-search-filter').addEventListener('input', () => renderClientOptions());
+$('#select-online').addEventListener('click', () => {
+  filteredClients(clients.filter(item => item.enabled)).forEach(item => {
+    if (!item.manageable) return;
+    if (item.online) selectedClients.add(item.id); else selectedClients.delete(item.id);
+  });
+  renderClientOptions();
 });
 $('#select-all').addEventListener('click', () => {
-  document.querySelectorAll('#client-options input[name="client_id"]:not(:disabled)').forEach(input => { input.checked = true; });
-  updateSelectionSummary();
+  filteredClients(clients.filter(item => item.enabled && item.manageable)).forEach(item => selectedClients.add(item.id));
+  renderClientOptions();
 });
 $('#clear-selection').addEventListener('click', () => {
-  document.querySelectorAll('#client-options input[name="client_id"]').forEach(input => { input.checked = false; });
-  updateSelectionSummary();
+  selectedClients.clear();
+  renderClientOptions();
 });
 
 // 创建 Client，并把服务端仅返回一次的原始 Token 转交给专用展示对话框。
@@ -320,7 +382,7 @@ $('#task-form').addEventListener('submit', async event => {
   const submit = event.currentTarget.querySelector('button[type="submit"]');
   const source = String(form.get('source') || '').trim();
   const subscriptionURL = String(form.get('subscription_url') || '').trim();
-  const clientIDs = form.getAll('client_id');
+  const clientIDs = [...selectedClientIDs()];
   errorBox.classList.add('hidden');
   if (!source && !subscriptionURL) {
     errorBox.textContent = '请粘贴代理内容或填写订阅 URL。';

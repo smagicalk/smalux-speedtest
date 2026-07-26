@@ -111,6 +111,8 @@ tbody tr:hover { background: #f8fbfa; }
 .task-source-pane, .task-options-pane { min-width: 0; padding: 20px; }
 .task-source-pane { display: grid; align-content: start; gap: 16px; }
 .task-options-pane { border-left: 1px solid var(--line); background: var(--surface-soft); }
+.task-target-pane { grid-column: 1 / -1; min-width: 0; padding: 20px; border-top: 1px solid var(--line); }
+.task-target-pane fieldset { margin: 0; }
 .parameter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .task-submit { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .field { display: grid; gap: 6px; }
@@ -131,8 +133,12 @@ fieldset { margin: 20px 0 0; padding: 0; border: 0; }
 legend { margin: 0; }
 .selection-heading { margin-bottom: 9px; }
 .selection-toolbar { align-items: flex-start; margin-bottom: 10px; }
+.client-filter-toolbar { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin-bottom: 10px; }
+.client-filter-toolbar .filter-field { min-width: 0; }
+.client-filter-toolbar .field-meta { padding-bottom: 9px; white-space: nowrap; }
 .selection-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.client-target-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); max-height: 360px; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; }
 .check-option { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .check-option:hover { border-color: #aab9bd; background: #fbfcfc; }
 .check-option:has(input:checked) { border-color: #86bbae; background: var(--accent-soft); }
@@ -245,6 +251,7 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
   .task-layout { grid-template-columns: 1fr; }
   .task-source-pane, .task-options-pane { padding: 16px; }
   .task-options-pane { border-top: 1px solid var(--line); border-left: 0; }
+  .task-target-pane { padding: 16px; }
   .parameter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .parameter-grid .field > span { overflow: hidden; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
   .parameter-grid select { min-height: 38px; padding-inline: 8px; }
@@ -257,6 +264,9 @@ dialog::backdrop { background: rgba(23,33,38,.36); }
   .table-tools { width: 100%; align-items: stretch; }
   .filter-field { flex: 1; min-width: 0; }
   .selection-toolbar { align-items: flex-start; flex-direction: column; }
+  .client-filter-toolbar { grid-template-columns: 1fr; align-items: stretch; }
+  .client-filter-toolbar .field-meta { padding-bottom: 0; }
+  .client-target-grid { grid-template-columns: 1fr; max-height: 420px; }
   .field-tools { display: grid; grid-template-columns: repeat(2, auto); justify-content: start; gap: 7px; }
   .field-tools .input-hint { grid-column: 1 / -1; }
   .selection-actions { width: 100%; }
