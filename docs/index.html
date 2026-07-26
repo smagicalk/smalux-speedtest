@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Smalux Speedtest 分布式代理测速项目文档">
+  <meta name="description" content="Smalux Speedtest 分布式代理测速项目文档、开发架构与二次开发指南">
   <title>Smalux Speedtest · 文档</title>
   <style>
     :root { --ink:#172225; --muted:#617074; --line:#dbe4e2; --paper:#f7faf9; --panel:#fff; --teal:#087f72; --teal-dark:#075b54; --orange:#d86d35; --code:#152326; --shadow:0 14px 36px rgba(23,34,37,.08); }
@@ -33,6 +33,7 @@
     .button { display:inline-flex; align-items:center; min-height:40px; padding:0 15px; border:1px solid var(--teal); border-radius:5px; color:#fff; background:var(--teal); font-weight:700; text-decoration:none; }
     .button.secondary { color:var(--teal-dark); background:transparent; }
     .grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin:28px 0 8px; }
+    .two-column { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; margin:18px 0; }
     .card { padding:18px; border:1px solid var(--line); border-radius:7px; background:var(--panel); box-shadow:var(--shadow); }
     .card strong { display:block; margin-bottom:4px; }
     .card p { margin:0; font-size:14px; }
@@ -48,7 +49,17 @@
     th, td { padding:10px 12px; border:1px solid var(--line); text-align:left; vertical-align:top; }
     th { color:#315055; background:#eaf3f0; font-size:14px; }
     td { color:#4a5a5d; font-size:14px; }
-    ul { padding-left:22px; color:#435356; }
+    ul, ol { padding-left:22px; color:#435356; }
+    li + li { margin-top:5px; }
+    .sequence { counter-reset:step; margin:18px 0 24px; padding:0; list-style:none; }
+    .sequence li { position:relative; min-height:48px; margin:0; padding:5px 0 18px 48px; border-left:2px solid #bed8d1; }
+    .sequence li:last-child { border-left-color:transparent; }
+    .sequence li::before { counter-increment:step; content:counter(step); position:absolute; top:0; left:-17px; display:grid; width:32px; height:32px; place-items:center; border:2px solid #bed8d1; border-radius:50%; color:var(--teal-dark); background:var(--paper); font-weight:800; }
+    .sequence strong { color:#263b3f; }
+    .file-map td:first-child { width:38%; white-space:nowrap; }
+    .invariant { margin:18px 0; padding:14px 17px; border-left:4px solid var(--teal); background:#e9f5f1; color:#31514d; }
+    .invariant strong { color:var(--teal-dark); }
+    .small { color:var(--muted); font-size:14px; }
     footer { margin-top:66px; padding-top:20px; border-top:1px solid var(--line); color:#728083; font-size:13px; }
     @media (max-width:800px) {
       .shell { display:block; }
@@ -59,6 +70,9 @@
       .version { display:none; }
       main { padding:42px 20px 70px; }
       .grid { grid-template-columns:1fr; }
+      .two-column { grid-template-columns:1fr; }
+      table { display:block; overflow-x:auto; }
+      .file-map td:first-child { width:auto; white-space:normal; }
       h1 { font-size:38px; }
       h2 { padding-top:42px; }
     }
@@ -71,9 +85,13 @@
       <p class="tagline">分布式代理测速控制平面与远程执行端</p>
       <nav class="nav" aria-label="文档导航">
         <a href="#quick-start">快速开始</a>
-        <a href="#architecture">架构</a>
+        <a href="#architecture">开发架构</a>
+        <a href="#call-flow">调用流程</a>
+        <a href="#state-model">状态与协议</a>
         <a href="#scheduler">调度规则</a>
         <a href="#proxies">代理与任务</a>
+        <a href="#extension">二次开发</a>
+        <a href="#testing">测试与调试</a>
         <a href="#bot">Telegram Bot</a>
         <a href="#security">安全与隐私</a>
         <a href="#release">构建发布</a>
@@ -88,6 +106,7 @@
         <p class="lead">Smalux Speedtest 将代理配置导入、分布式 Client 执行、实时进度和 PNG 报告集中在一个 Server 控制台中。Server 不保存原始订阅和 sing-box outbound。</p>
         <div class="hero-actions">
           <a class="button" href="#quick-start">开始部署</a>
+          <a class="button secondary" href="#architecture">二次开发指南</a>
           <a class="button secondary" href="https://github.com/smagicalk/smalux-speedtest">查看源码</a>
         </div>
       </header>
@@ -132,18 +151,177 @@ sudo ./smalux.sh uninstall</code></pre>
       </section>
 
       <section id="architecture">
-        <h2>架构</h2>
-        <table>
-          <thead><tr><th>模块</th><th>职责</th></tr></thead>
+        <h2>开发架构</h2>
+        <p>项目是单 Go module、两个进程入口。Server 负责控制面、调度和持久化，Client 负责数据面执行。浏览器和 Telegram 只是两个任务入口，最终都进入同一个 <code>serverapp.startTask</code>，因此参数校验、订阅安全、调度语义和隐私边界不会分叉。</p>
+        <pre><code> Browser dashboard                         Telegram private chat
+ HTTP + Session + CSRF                    Bot API + authorization
+          |                                          |
+          v                                          v
+ +--------------------- internal/serverapp ----------------------+
+ | routes/auth      web task API       telegram task adapter      |
+ |       \               |                     /                  |
+ |        +-------- task_service.startTask ----------------+      |
+ |                  /        |             \               |      |
+ |     subscription fetch  importer      SQLite Store      |      |
+ |                                          |              |      |
+ |                                     Hub scheduler <-----+      |
+ |                                      |         |               |
+ |                               WebSocket v2     +--> SSE/browser|
+ +--------------------------------------|--------------------------+
+                                        v
+ +--------------------- internal/clientapp ----------------------+
+ | connection -> worker -> executor -> embedded sing-box outbound|
+ |                                  -> speedtest-go HTTP traffic  |
+ +---------------------------------------------------------------+
+                                        |
+                                        v
+                              public Speedtest.net endpoints</code></pre>
+        <div class="invariant"><strong>最重要的边界：</strong>SQLite 中只有任务摘要、目标状态和脱敏结果。分享链接、订阅正文和 sing-box outbound 只在 <code>runtimeTask.assignment</code> 与当前 Client 执行上下文中短暂存在。</div>
+
+        <h3>源码目录与所有权</h3>
+        <table class="file-map">
+          <thead><tr><th>路径</th><th>职责与主要入口</th></tr></thead>
           <tbody>
-            <tr><td><code>server</code> / <code>internal/serverapp</code></td><td>HTTP 控制台、管理员认证、任务状态、WebSocket Hub、SSE 进度和报告导出。</td></tr>
-            <tr><td><code>client</code> / <code>internal/clientapp</code></td><td>认证连接、接收工作单元、启动 sing-box outbound、延迟/上下行测速。</td></tr>
-            <tr><td><code>internal/importer</code></td><td>解析单条 URI、批量文本、订阅内容和可选 Base64，归一化为 sing-box 配置。</td></tr>
-            <tr><td><code>internal/store</code></td><td>SQLite 持久化管理员、Client 元数据、任务状态和脱敏结果。</td></tr>
-            <tr><td><code>internal/telegrambot</code></td><td>可选 Telegram Bot，负责授权、交互式任务创建和 PNG 回复。</td></tr>
+            <tr><td><code>server/main.go</code></td><td>解析 Server 参数和环境变量，建立日志、信号 Context，调用 <code>serverapp.New</code>、<code>Run</code> 与 <code>Shutdown</code>。</td></tr>
+            <tr><td><code>client/main.go</code></td><td>解析 Server URL 与 Token，注入版本，启动 <code>clientapp.Run</code> 并处理进程信号。</td></tr>
+            <tr><td><code>internal/serverapp/app.go</code></td><td>装配 Store、Hub、订阅 Fetcher、模板、Telegram 生命周期和 HTTP 路由；Web 资源通过 <code>go:embed</code> 进入二进制。</td></tr>
+            <tr><td><code>internal/serverapp/auth.go</code></td><td>登录页、Session Cookie、CSRF、Owner 中间件和页面模板数据。</td></tr>
+            <tr><td><code>internal/serverapp/task_service.go</code></td><td>网页与 Bot 共用的任务创建服务：导入、参数/Client 校验、wire 大小检查、持久化和加入 Hub。</td></tr>
+            <tr><td><code>internal/serverapp/hub*.go</code></td><td>Client WebSocket、运行时任务、Client/proxy lease、公平调度、ACK、结果验证、断线重排、取消、超时和 SSE。</td></tr>
+            <tr><td><code>internal/serverapp/tasks.go</code></td><td>任务列表、详情、取消、SSE 和 CSV API；所有任务入口统一执行管理员归属校验。</td></tr>
+            <tr><td><code>internal/serverapp/web/*</code></td><td>无框架 ES module 管理端；<code>dashboard.js</code> 管理任务入口，<code>task.js</code> 合并 REST 快照和 SSE 增量。</td></tr>
+            <tr><td><code>internal/clientapp/connection.go</code></td><td>单 WebSocket 连接的串行发送、读取限制、当前任务 Context 与取消状态。</td></tr>
+            <tr><td><code>internal/clientapp/worker.go</code></td><td>接收单代理 Assignment，发送 ACK、进度、结果与完成/失败消息。</td></tr>
+            <tr><td><code>internal/clientapp/executor.go</code></td><td>启动独立 sing-box 实例，选择 Speedtest 节点并执行延迟、下载和上传测试。</td></tr>
+            <tr><td><code>internal/clientapp/singbox.go</code></td><td>生产 outbound 注册表和最小 sing-box Context；构建标签决定 uTLS 等能力是否存在。</td></tr>
+            <tr><td><code>internal/importer/*</code></td><td>订阅/Base64 识别、URI 协议转换、transport/TLS/Reality 映射、去重和安全错误分类。</td></tr>
+            <tr><td><code>internal/store/*</code></td><td>SQLite schema、幂等迁移、隐私清洗、管理员/Client、任务状态事务和结果写入。</td></tr>
+            <tr><td><code>internal/model/*</code></td><td>跨 Server/Client 的领域模型、协议版本、固定错误类别、公开文本归一化和敏感内存清理。</td></tr>
+            <tr><td><code>internal/wire/*</code></td><td>WebSocket Envelope 编解码、消息类型和双向 2 MiB 上限。</td></tr>
+            <tr><td><code>internal/subscription/*</code></td><td>带 DNS/重定向复验的 SSRF 防护、15 秒超时和 5 MiB 响应限制。</td></tr>
+            <tr><td><code>internal/telegrambot/*</code></td><td>Bot API、命令/向导、授权、进度消息和有界重试队列；不直接实现调度。</td></tr>
+            <tr><td><code>internal/reportpng/*</code></td><td>Server 侧有界 PNG 报告；浏览器侧报告位于 <code>web/report.js</code>。</td></tr>
           </tbody>
         </table>
-        <p>完整 outbound 只存在于 Server 的运行时任务内存和当前 Client 进程内。任务结束、取消或超时后，服务会清理内存中的代理字节。</p>
+
+        <h3>依赖方向</h3>
+        <p>入口包只做配置和生命周期；业务包依赖共享模型与 Store，不反向依赖可执行入口。新增能力时应尽量沿用以下方向，避免把 HTTP、Telegram 或 SQLite 细节带进 Client 执行器。</p>
+        <pre><code>server/main -> serverapp -> store / subscription / importer / model / wire
+client/main -> clientapp -> importer-produced model / wire / sing-box
+telegrambot <- serverapp adapter -> shared task service
+web browser <- JSON + SSE API -> serverapp</code></pre>
+      </section>
+
+      <section id="call-flow">
+        <h2>详细调用流程</h2>
+
+        <h3>1. Server 启动与关闭</h3>
+        <ol class="sequence">
+          <li><strong><code>server/main.go</code></strong>读取命令行和 <code>SMALUX_*</code> 环境变量，建立根 Context、结构化日志和信号处理。</li>
+          <li><strong><code>serverapp.New</code></strong>调用 <code>store.Open</code>；Store 打开单连接 SQLite，设置 WAL、foreign keys、busy timeout，并执行全部幂等迁移和隐私清洗。</li>
+          <li><strong>管理员引导</strong>通过 <code>BootstrapAdmin</code> 创建首次 Owner；已有数据库不会再次使用启动密码覆盖账户。</li>
+          <li><strong>组件装配</strong>创建 Hub、SSRF Fetcher、Session Store、模板和可选 Telegram 控制器，再注册 <code>routes()</code>。</li>
+          <li><strong><code>Run</code></strong>启动 HTTP Server；Client WebSocket、管理 API、静态资源与健康检查共用该监听器。</li>
+          <li><strong><code>Shutdown</code></strong>先阻止新工作并停止 Bot，再终结/清理 Hub 运行态、关闭 HTTP 与数据库。重启无法恢复包含代理凭据的活动任务，迁移会把遗留 queued/running 标记为 failed。</li>
+        </ol>
+
+        <h3>2. 网页创建任务</h3>
+        <ol class="sequence">
+          <li><strong>浏览器</strong>从 <code>dashboard.html</code> 取得 Session 对应的 CSRF Token，<code>dashboard.js</code> 向 <code>POST /api/tasks</code> 提交来源、Client ID 和三个有界参数。</li>
+          <li><strong><code>requireAdmin + csrf</code></strong>验证会话、账户启用状态和同步 Token；<code>createTask</code> 再确认普通管理员只能使用自己创建的 Client。</li>
+          <li><strong><code>startTask</code></strong>先检查目标非空。存在订阅 URL 时调用 <code>subscription.Fetcher</code>，每次 DNS、连接和重定向都重新执行 SSRF 防护。</li>
+          <li><strong><code>importer.Parse</code></strong>识别普通文本或整体 Base64，逐行转换为 <code>model.ProxySpec</code>，按规范键去重。无效行只形成脱敏 <code>ImportError</code>。</li>
+          <li><strong>服务校验</strong>应用默认 Candidate=10、Top N=3、Threads=4，验证范围、Client 存在/启用状态和去重后的目标顺序。</li>
+          <li><strong>wire 预检</strong>对每个单代理工作单元构造真实 <code>task.assign</code> Envelope，确保编码后不超过 2 MiB。失败发生在数据库写入之前。</li>
+          <li><strong><code>store.CreateTask</code></strong>在一个事务中写入任务摘要和全部 <code>task_targets</code>；只保存成功数、跳过数和创建管理员 ID，不保存导入正文。</li>
+          <li><strong><code>hub.AddTask</code></strong>把完整 Assignment 放入内存，计算临时 HMAC 代理指纹，建立 per-Client 工作顺序并触发全局调度。</li>
+        </ol>
+
+        <h3>3. Hub 分配与 Client 执行</h3>
+        <ol class="sequence">
+          <li><strong>连接握手</strong>Client 用 Bearer Token 升级 WebSocket，10 秒内发送 <code>client.hello</code>；Server 验证协议 v2 后返回 <code>server.welcome</code>，才把 peer 暴露给调度器。</li>
+          <li><strong><code>reserveNextWork</code></strong>按任务轮转和目标顺序选择空闲 Client、未完成代理，同时取得 Client lease 与代理指纹 lease。</li>
+          <li><strong><code>task.assign</code></strong>只携带一个代理、稳定 TaskID、新 WorkID、代理位置和测速参数。发送失败会回滚 reservation 并继续调度其他可用 Client。</li>
+          <li><strong>Client worker</strong>验证 Assignment，建立 600 秒任务 Context，发送 <code>task.ack</code>，然后调用 Executor。</li>
+          <li><strong>Executor</strong>为该代理启动独立 sing-box outbound，通过其 <code>DialContext</code> 请求 Speedtest 配置，先测候选延迟，再对 Top N 执行下载和上传。</li>
+          <li><strong>进度与结果</strong>Client 按阶段发送 <code>task.progress</code>，每个 Speedtest 节点发送一条 <code>task.result</code>，最后发送 <code>task.complete</code>；异常则发送固定类别的 <code>task.failed</code>。</li>
+        </ol>
+
+        <h3>4. 结果落库与页面实时更新</h3>
+        <ol class="sequence">
+          <li><strong>不信任回传</strong>Hub 使用当前 WorkID、Client peer 和 Assignment 快照重建代理/Client 身份，限制进度范围，并归一化协议、名称、测速节点与错误类别。</li>
+          <li><strong>幂等结果写入</strong><code>store.SaveResult</code>以 Task + Client + Proxy + Speed Server 为唯一键写入脱敏结果，重复回传执行更新而非追加。</li>
+          <li><strong>目标事务</strong><code>FinishTarget</code>原子更新一个 <code>task_target</code> 并聚合父任务；全部目标终结后确定 completed、partial 或 failed。</li>
+          <li><strong>SSE</strong>Hub 发布 <code>progress</code>、<code>result</code>、<code>target</code> 和 <code>status</code>。慢浏览器队列满时允许丢增量，不能反压测速主流程。</li>
+          <li><strong>REST 兜底</strong><code>task.js</code>用 revision 合并 SSE 与 <code>GET /api/tasks/{id}</code> 快照，避免旧 HTTP 响应覆盖新结果/target 状态，并每 12 秒低频复核。</li>
+          <li><strong>报告</strong>CSV 由 Server 从持久化结果生成；网页 PNG 在浏览器 Canvas 中生成；Telegram PNG 使用 <code>internal/reportpng</code>。</li>
+        </ol>
+
+        <h3>5. 断线、取消、撤销与超时</h3>
+        <table>
+          <thead><tr><th>事件</th><th>处理流程</th><th>最终效果</th></tr></thead>
+          <tbody>
+            <tr><td>Client 断线/连接替换</td><td><code>unregister/register -> requeueTarget</code>；运行目标数据库回到 queued，释放当前工作和两个 lease，发布 target SSE。</td><td>有效 Token 重连后只继续该 Client 尚未完成的代理。</td></tr>
+            <tr><td>管理员取消</td><td><code>POST .../cancel -> Hub.CancelTask -> store.CancelTask</code>，再向在线 peer 发送 <code>task.cancel</code>。</td><td>活动目标变 canceled，敏感 Assignment 清理，结果保留。</td></tr>
+            <tr><td>Client Token 撤销</td><td>先禁用数据库凭据，再从 Hub 移除连接并对活动目标调用 <code>finishTarget(...failed)</code>。</td><td>旧连接关闭，后续认证拒绝，其他 Client 可继续。</td></tr>
+            <tr><td>10 分钟任务到期</td><td><code>expireTask</code>设置 terminalPending，在事务中失败化全部活动目标；数据库忙时有界重试。</td><td>任务 failed，并尽力通知 Client 停止本地流量。</td></tr>
+            <tr><td>Server 重启</td><td>内存 Assignment 不恢复；启动迁移扫描遗留活动任务和目标。</td><td>统一标记 failed，避免永久 queued/running。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="state-model">
+        <h2>状态模型与应用层协议</h2>
+        <p>开发状态机时必须区分“数据库公开状态”和“Hub 仅内存状态”。<code>assigned</code>、lease、WorkID、代理指纹和 outbound 都是进程内实现细节，不应新增到 SQLite。</p>
+
+        <div class="two-column">
+          <div>
+            <h3>任务状态</h3>
+            <pre><code>queued -> running -> completed
+                  \-> partial
+                  \-> failed
+queued/running ----> canceled
+queued/running ----> failed (timeout/restart)</code></pre>
+          </div>
+          <div>
+            <h3>目标 Client 状态</h3>
+            <pre><code>queued -> running -> completed
+   ^          |----> failed
+   |          |----> canceled
+   +----------+
+    disconnect/replacement</code></pre>
+          </div>
+        </div>
+        <p class="small">Hub 内部还会短暂使用 <code>assigned</code> 表示消息已发送但尚未 ACK；数据库在 ACK 成功前仍保持 queued。</p>
+
+        <h3>WebSocket v2 消息</h3>
+        <table>
+          <thead><tr><th>方向</th><th>类型</th><th>用途与校验点</th></tr></thead>
+          <tbody>
+            <tr><td>Client -> Server</td><td><code>client.hello</code></td><td>首帧握手，包含协议版本和受限运行元数据；名称/标签仍以 Server 管理值为准。</td></tr>
+            <tr><td>Server -> Client</td><td><code>server.welcome</code></td><td>确认认证后的 Client ID；成功发送后 peer 才进入 Hub。</td></tr>
+            <tr><td>Server -> Client</td><td><code>task.assign</code></td><td>一个代理工作单元；TaskID、WorkID、参数和代理位置必须一致且小于 2 MiB。</td></tr>
+            <tr><td>Client -> Server</td><td><code>task.ack</code></td><td>确认 WorkID；Server 原子推进 target 到 running。</td></tr>
+            <tr><td>Client -> Server</td><td><code>task.progress</code></td><td>瞬时进度，不持久化；Server 绑定可信 Client/代理身份并限制 phase/current/total。</td></tr>
+            <tr><td>Client -> Server</td><td><code>task.result</code></td><td>单测速节点结果；必须匹配当前 Assignment，文本和数值再次归一化后才落库。</td></tr>
+            <tr><td>Client -> Server</td><td><code>task.complete</code></td><td>当前单代理工作完成；释放 lease，必要时立即分配下一个代理。</td></tr>
+            <tr><td>Client -> Server</td><td><code>task.failed</code></td><td>固定任务失败类别；任意底层错误不得进入 wire、数据库或日志。</td></tr>
+            <tr><td>Server -> Client</td><td><code>task.cancel</code></td><td>取消/超时后的尽力通知；数据库终态不依赖消息一定送达。</td></tr>
+            <tr><td>Client -> Server / Server -> Client</td><td><code>ping</code> / <code>pong</code></td><td>Client 定时发送 ping，Server 回应 pong 并更新最后活跃时间；不改变任务状态。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>浏览器 SSE 事件</h3>
+        <table>
+          <thead><tr><th>事件 type</th><th>负载</th><th>前端行为</th></tr></thead>
+          <tbody>
+            <tr><td><code>progress</code></td><td>规范化 <code>model.Progress</code></td><td>更新阶段、代理名称、计数和速率。</td></tr>
+            <tr><td><code>result</code></td><td>已验证 <code>SpeedResult</code></td><td>按数据库唯一键合并结果，避免重发造成重复行。</td></tr>
+            <tr><td><code>target</code></td><td>Client ID、target status、可选固定说明</td><td>实时更新 Client 状态；revision 防止旧 REST 快照回滚显示。</td></tr>
+            <tr><td><code>status</code></td><td>父任务状态与固定说明</td><td>推进父状态，终态时强制读取完整快照并关闭 EventSource。</td></tr>
+          </tbody>
+        </table>
+        <div class="callout"><strong>一致性原则：</strong>SQLite 是最终权威，SSE 是低延迟增量。不要把业务正确性建立在事件一定送达上；Hub 的事件队列有意采用非阻塞发送。</div>
       </section>
 
       <section id="scheduler">
@@ -182,6 +360,113 @@ sudo ./smalux.sh uninstall</code></pre>
         <div class="callout"><strong>不支持：</strong>SSR 已被 sing-box 1.13 移除；Naive 会引入体积较大的多平台 Cronet 运行库，因此项目有意不注册。其他未列出的 URI 会返回协议不支持。</div>
         <p>任务参数包括候选测速节点数量、Top N 下载/上传节点和线程数。每个 Client 的任务参数由 Server 下发，Client 命令不需要重复配置这些选项。</p>
         <p>任务详情页提供实时 SSE 进度、每个目标 Client 的执行状态、结果表格、CSV 和品牌化 PNG 报告。存在无效代理行时只展示成功与跳过数量，不持久化原始输入或导入明细。Bot 创建的任务会编辑同一条进度消息，并在完成后引用原始请求回复图片。</p>
+      </section>
+
+      <section id="extension">
+        <h2>二次开发指南</h2>
+        <p>先确定变化属于哪一条边界，再从边界两侧同时修改。仅让代码“能够编译”通常不够：wire 变化涉及 Server 与 Client，持久化变化涉及迁移与隐私，任务变化涉及网页与 Telegram 两个入口。</p>
+
+        <h3>常见扩展的修改落点</h3>
+        <table class="file-map">
+          <thead><tr><th>需求</th><th>至少检查的代码与兼容要求</th></tr></thead>
+          <tbody>
+            <tr><td>新增代理分享协议</td><td>在 <code>internal/importer</code> 增加 scheme 解析、规范化和测试，并在 <code>internal/clientapp/singbox.go</code> 注册对应 sing-box outbound。确认目标平台依赖、构建标签和二进制体积后，再更新支持列表。</td></tr>
+            <tr><td>增加测速参数</td><td>贯穿 <code>taskRequest</code>、参数校验、<code>store.Task</code>、<code>model.Assignment</code>、Dashboard、Telegram 向导和 Executor。参数需要明确默认值、上下限及旧数据库默认值。</td></tr>
+            <tr><td>修改 WebSocket 消息</td><td>先改 <code>internal/model</code> 与 <code>internal/wire</code>，再同步 Hub 和 Client。任何不兼容的字段语义、消息顺序或尺寸变化都应提升 <code>model.ProtocolVersion</code>，并要求 Server/Client 同步升级。</td></tr>
+            <tr><td>新增数据库字段</td><td>在 <code>internal/store/migration.go</code> 中为新库更新建表语句，并通过 <code>ensureColumn</code> 为旧库做幂等迁移；同步 Scan、INSERT/UPDATE、公开结构和升级测试。不要把代理凭据加入 schema。</td></tr>
+            <tr><td>新增管理 API</td><td>在 <code>serverapp.routes</code> 显式声明方法和路径；读取接口套 <code>requireAdmin</code>，写接口再套 <code>csrf</code>，Owner-only 操作增加 <code>requireOwner</code>。资源查询后仍需执行对象归属校验。</td></tr>
+            <tr><td>修改任务详情 UI</td><td>HTML/CSS/ES module 位于 <code>internal/serverapp/web</code>。实时字段同时处理 SSE 增量和 REST 快照，并考虑旧快照晚到的覆盖竞态。资源由 <code>go:embed</code> 打包，修改后必须重启重新构建的 Server。</td></tr>
+            <tr><td>修改调度策略</td><td>从 <code>hub_dispatch.go</code> 的 reservation/lease 入手，并检查 ACK、完成、失败、取消、到期、撤销、断线、连接替换和 Shutdown 的释放路径。状态变更必须遵守 transition 锁和“先落库、后发布”原则。</td></tr>
+            <tr><td>增加 Telegram 交互</td><td><code>internal/telegrambot</code> 负责 API 与更新解析，<code>internal/serverapp/telegram*.go</code> 负责授权和任务适配。测速创建必须复用 <code>startTask</code>，不要建立另一套导入或调度逻辑。</td></tr>
+            <tr><td>修改报告字段</td><td>同步 CSV、浏览器 <code>report.js</code> 与 Server <code>internal/reportpng</code>。机器导出可保留稳定英文枚举，界面和图片在展示层本地化。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>HTTP 接口分层</h3>
+        <table>
+          <thead><tr><th>接口组</th><th>认证与用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>/login</code>、<code>/register</code></td><td>公开页面和表单；请求体有小尺寸上限，登录建立 HttpOnly Session。</td></tr>
+            <tr><td><code>/api/clients</code>、<code>/api/tasks</code></td><td>管理员 Session；写操作要求 CSRF。普通管理员受 Client/Task 所有权约束，Owner 可跨账户管理。</td></tr>
+            <tr><td><code>/api/admin-*</code>、<code>/api/settings/telegram</code></td><td>Owner-only 管理面；写操作同时要求 CSRF。</td></tr>
+            <tr><td><code>/api/tasks/{id}/events</code></td><td>归属校验后的 SSE 长连接；只提供实时提示，REST/SQLite 才是可恢复的权威状态。</td></tr>
+            <tr><td><code>/ws/client</code></td><td>Bearer Client Token，不使用管理员 Session 或 CSRF；默认要求 HTTPS/WSS，并在升级后执行 v2 hello/welcome 握手。</td></tr>
+            <tr><td><code>/healthz</code>、<code>/static/*</code></td><td>公开健康检查和嵌入资源；不得携带运行配置或敏感诊断信息。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>必须保持的工程约束</h3>
+        <ul>
+          <li><strong>输入不可信：</strong>浏览器、Telegram、订阅服务和已持有 Token 的 Client 都是外部输入。身份字段应由服务端上下文重建，文本、数值、数量和消息大小必须有界。</li>
+          <li><strong>敏感数据只驻留内存：</strong>分享链接、订阅正文和 outbound 不进入数据库、日志、SSE、报告或任意错误文本；任务终结时继续调用现有清理路径。</li>
+          <li><strong>SQLite 先于事件：</strong>终态先成功提交，再移除 runtime、清理凭据并发布 SSE。数据库暂时失败时保留不可继续执行的内存状态并有界重试。</li>
+          <li><strong>并发 I/O 不持有 Hub 全局锁：</strong>在锁内只快照/提交内存决定，WebSocket 与 SQLite I/O 放到锁外或使用任务级 transition 串行化。</li>
+          <li><strong>事件可丢，结果不可丢：</strong>Progress/SSE 可以尽力而为；Result 与终态发送失败必须断开连接，由服务端重排与幂等键保证收敛。</li>
+          <li><strong>兼容升级可重复：</strong>迁移要能在每次启动执行，协议不兼容要显式升版本，错误类别和 CSV 字段应保持机器稳定。</li>
+        </ul>
+
+        <h3>推荐实现顺序</h3>
+        <ol>
+          <li>先写领域模型、状态转换或导入器的单元测试，固定新行为和失败边界。</li>
+          <li>实现 Store/Client 等内层能力，再接入 Hub 或共享任务服务。</li>
+          <li>接入 HTTP 与 Telegram 适配层，补权限、CSRF、正文上限和安全错误映射。</li>
+          <li>最后接 UI/SSE 展示，并用真实 Server/Client 流程验证断线和终态。</li>
+          <li>完成普通测试、发布标签测试、race、vet、构建和文档同步后再提交。</li>
+        </ol>
+      </section>
+
+      <section id="testing">
+        <h2>本地开发、测试与调试</h2>
+        <p>Go 版本和依赖以 <code>go.mod</code> 为准。正式 Client 必须带 <code>with_utls</code> 标签，否则 Reality 和 TLS fingerprint outbound 可能在运行阶段失败。</p>
+
+        <h3>最小本地环境</h3>
+        <pre><button class="copy" type="button">复制</button><code># 终端 1：使用临时开发数据库启动 Server
+SMALUX_ADMIN_PASSWORD='dev-password-change-me' \
+  go run ./server -listen 127.0.0.1:18080 -db /tmp/smalux-dev.db
+
+# 在网页创建 Client 后，终端 2 启动正式能力集的 Client
+SMALUX_CLIENT_TOKEN='TOKEN_SHOWN_ONCE' \
+  go run -tags with_utls ./client \
+  -server ws://127.0.0.1:18080/ws/client</code></pre>
+        <p class="small">该示例只监听 loopback；不要在共享主机复用示例密码或 Token。调试迁移时使用数据库副本，不要对生产 SQLite 直接试验。</p>
+
+        <h3>提交前验证矩阵</h3>
+        <pre><button class="copy" type="button">复制</button><code># 快速反馈：普通能力集
+go test ./...
+
+# 与发布 Client 一致，覆盖 uTLS / Reality 编译和测试
+go test -tags with_utls ./...
+
+# 并发状态机改动至少覆盖这两个包
+go test -race ./internal/store ./internal/serverapp
+
+# 静态检查与正式构建
+go vet ./...
+make build
+
+# HTML 本身没有构建步骤；提交前仍检查空白与冲突标记
+git diff --check</code></pre>
+        <table>
+          <thead><tr><th>变更范围</th><th>重点测试</th></tr></thead>
+          <tbody>
+            <tr><td>Importer / sing-box</td><td>合法与畸形 URI、Base64、TLS/Reality/transport 映射、<code>with_utls</code> 测试及目标平台构建。</td></tr>
+            <tr><td>Store / migration</td><td>空库建表、旧 schema 升级两次、事务回滚、隐私存储边界和 <code>-race</code>。</td></tr>
+            <tr><td>Hub / wire</td><td>真实 WebSocket 生命周期、调度公平性、重复/迟到消息、断线重排、撤销、取消、到期和 Shutdown。</td></tr>
+            <tr><td>权限 / API</td><td>未登录、缺失 CSRF、普通管理员跨所有权访问、Owner 访问、禁用账户和超大请求体。</td></tr>
+            <tr><td>Web / SSE</td><td>REST 与 SSE 乱序、事件丢失后的快照恢复、终态关闭、控制台错误、桌面和 390px 移动端布局。</td></tr>
+            <tr><td>Telegram / PNG</td><td>授权边界、offset 持久化、API 短暂失败、有界重试、CJK/长文本和图片尺寸上限。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>定位一条任务</h3>
+        <ol class="sequence">
+          <li><strong>先看持久化快照</strong>：任务详情 REST 返回 task、targets 和 results，能区分“页面没更新”与“服务状态没推进”。</li>
+          <li><strong>再看实时通道</strong>：浏览器 Network 中确认 SSE 是否连接并收到 target/status；Client 侧确认 WebSocket 是否完成 welcome、assign、ack。</li>
+          <li><strong>按 WorkID 查竞态</strong>：TaskID 关联整批任务，WorkID 关联单个代理工作。迟到 ACK/result/complete 必须因 peer 或 WorkID 不匹配而被忽略。</li>
+          <li><strong>检查目标而非只看父任务</strong>：父状态由所有 <code>task_targets</code> 聚合；单个 Client 断线、失败或取消通常先体现在 target。</li>
+          <li><strong>避免打开敏感日志</strong>：不要为调试打印 Envelope payload、订阅正文或 outbound。使用 TaskID、WorkID、Client ID、固定错误类别和状态转换定位问题。</li>
+        </ol>
+        <div class="callout"><strong>前端调试提示：</strong>Server 二进制嵌入 <code>internal/serverapp/web</code>。编辑 JS/HTML/CSS 后，旧进程不会自动读取磁盘文件；需要重新构建或重新 <code>go run</code> 并重启实例。</div>
       </section>
 
       <section id="bot">
