@@ -46,6 +46,8 @@ type Client struct {
 type Task struct {
 	// ID 是任务的全局随机标识，也是 API、SSE 和 WebSocket 关联任务的主键。
 	ID string `json:"id"`
+	// OwnerAdminID 是创建任务的管理员。旧任务可能为空，只允许 Owner 管理。
+	OwnerAdminID string `json:"-"`
 	// Status 由调度器维护，通常依次经历 queued、running 和一个终态。
 	Status string `json:"status"`
 	// CandidateCount 是延迟探测候选测速服务器数。
@@ -58,6 +60,8 @@ type Task struct {
 	ProxyCount int `json:"proxy_count"`
 	// ClientCount 是该任务选择的目标 Client 数量。
 	ClientCount int `json:"client_count"`
+	// ImportErrorCount 是导入时跳过的无效输入数量，不包含输入或错误明细。
+	ImportErrorCount int `json:"import_error_count"`
 	// Error 保存任务级状态说明，不包含代理分享链接或连接凭据。
 	Error string `json:"error,omitempty"`
 	// CreatedAt 是任务创建时的 UTC RFC3339Nano 时间。
@@ -66,6 +70,14 @@ type Task struct {
 	StartedAt string `json:"started_at,omitempty"`
 	// FinishedAt 是任务进入任一终态的 UTC RFC3339Nano 时间。
 	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+// TaskTarget 是任务在单个 Client 上的公开执行状态。
+type TaskTarget struct {
+	ClientID   string `json:"client_id"`
+	ClientName string `json:"client_name"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Open 打开或创建 SQLite 数据库，并在返回前完成幂等 schema 迁移。

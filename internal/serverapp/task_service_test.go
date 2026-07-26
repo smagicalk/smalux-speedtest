@@ -150,8 +150,9 @@ func TestStartTaskAppliesDefaultsAndDeduplicatesClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := application.startTask(t.Context(), taskRequest{
-		Source:    "socks5://example.com:1080#node",
-		ClientIDs: []string{second.ID, first.ID, second.ID},
+		Source:       "socks5://example.com:1080#node\nnot-a-proxy",
+		ClientIDs:    []string{second.ID, first.ID, second.ID},
+		OwnerAdminID: "admin-test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -162,14 +163,14 @@ func TestStartTaskAppliesDefaultsAndDeduplicatesClients(t *testing.T) {
 			t.Errorf("cancel task: %v", err)
 		}
 	}()
-	if created.Task.CandidateCount != 10 || created.Task.TopN != 3 || created.Task.Threads != 4 || created.Task.ClientCount != 2 || created.Task.ProxyCount != 1 {
+	if created.Task.CandidateCount != 10 || created.Task.TopN != 3 || created.Task.Threads != 4 || created.Task.ClientCount != 2 || created.Task.ProxyCount != 1 || created.Task.ImportErrorCount != 1 || created.Task.OwnerAdminID != "admin-test" {
 		t.Fatalf("unexpected created task: %+v", created.Task)
 	}
 	stored, err := application.store.GetTask(t.Context(), created.Task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.CandidateCount != 10 || stored.TopN != 3 || stored.Threads != 4 || stored.ClientCount != 2 {
+	if stored.CandidateCount != 10 || stored.TopN != 3 || stored.Threads != 4 || stored.ClientCount != 2 || stored.ImportErrorCount != 1 || stored.OwnerAdminID != "admin-test" {
 		t.Fatalf("unexpected stored task: %+v", stored)
 	}
 	application.hub.mu.RLock()

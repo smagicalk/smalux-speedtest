@@ -132,7 +132,7 @@ SQLite 表由 `internal/store/migration.go` 管理，主要包括管理员、邀
 
 - 管理员密码 bcrypt 哈希、Client Token 哈希。
 - Client 的受限名称/标签和启用状态。
-- 任务参数、计数、状态和固定错误类别。
+- 任务参数、创建管理员 ID、成功/跳过计数、状态和固定错误类别。
 - 脱敏代理地址、规范化节点名/协议、公开 Speedtest 节点元数据和测量值。
 - 加密后的 Telegram Bot Token；本地加密 key 与数据库分开保存。
 
@@ -170,6 +170,12 @@ VMess、VLESS、Trojan 的 V2Ray transport 支持默认 TCP（省略、`tcp`、`
 - SSR 已从 sing-box 1.13 移除；Naive 因 Cronet 体积未注册。
 
 ## 最近完成的改动
+
+- 当前工作区（未提交）
+  - 管理后台改为紧凑响应式布局，并完成桌面/390px 浏览器验证。
+  - 任务按创建管理员隔离；Owner 可管理全部任务，旧任务只对 Owner 可见。
+  - 任务详情展示安全的导入跳过计数与每个目标 Client 状态；target SSE 实时同步运行、终态和断线重排。
+  - 失败、部分完成和取消任务按实际结果显示进度，REST 请求具有超时且后台标签暂停轮询。
 
 - `5357055 feat: improve proxy share link compatibility`
   - 扩展 VLESS/VMess/Trojan transport 字段。

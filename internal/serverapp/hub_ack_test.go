@@ -45,6 +45,8 @@ func TestDisconnectDuringACKRequeuesCommittedRunningState(t *testing.T) {
 	hub.tasks[task.ID] = runtime
 	hub.clientWork[client.ID] = ref
 	hub.proxyWork[key] = ref
+	events, unsubscribe := hub.Subscribe(task.ID)
+	defer unsubscribe()
 
 	blocker, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -112,6 +114,23 @@ func TestDisconnectDuringACKRequeuesCommittedRunningState(t *testing.T) {
 	hub.mu.RUnlock()
 	if memoryStatus != "queued" {
 		t.Fatalf("memory target status = %q, want queued", memoryStatus)
+	}
+	var requeuedEvent taskEvent
+	eventDeadline := time.After(2 * time.Second)
+eventLoop:
+	for {
+		select {
+		case event := <-events:
+			if event.Type == "target" && event.TargetStatus == "queued" {
+				requeuedEvent = event
+				break eventLoop
+			}
+		case <-eventDeadline:
+			t.Fatal("queued target SSE event was not published")
+		}
+	}
+	if requeuedEvent.ClientID != client.ID || requeuedEvent.Message != "client disconnected" {
+		t.Fatalf("unexpected queued target event: %+v", requeuedEvent)
 	}
 	// queued 是 StartTarget 的唯一可转换前置，成功返回同时验证 SQLite 已重排队。
 	if started, err := database.StartTarget(t.Context(), task.ID, client.ID); err != nil || !started {

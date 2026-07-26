@@ -74,12 +74,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		// tasks 只保存任务摘要，代理凭据不会随任务持久化。
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY,
+			owner_admin_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			candidate_count INTEGER NOT NULL,
 			top_n INTEGER NOT NULL,
 			threads INTEGER NOT NULL DEFAULT 4,
 			proxy_count INTEGER NOT NULL,
 			client_count INTEGER NOT NULL,
+			import_error_count INTEGER NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			started_at TEXT NOT NULL DEFAULT '',
@@ -131,6 +133,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate administrator users: %w", err)
 	}
 	if err := s.ensureColumn(ctx, "tasks", "threads", "INTEGER NOT NULL DEFAULT 4"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "tasks", "owner_admin_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "tasks", "import_error_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "clients", "owner_admin_id", "TEXT NOT NULL DEFAULT ''"); err != nil {

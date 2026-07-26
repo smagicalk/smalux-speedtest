@@ -82,6 +82,88 @@ func TestClientOwnershipLimitsOperatorMutations(t *testing.T) {
 		t.Fatalf("operator owner task status = %d", response.StatusCode)
 	}
 	response.Body.Close()
+
+	createTask := func(client *http.Client, csrf, clientID string) store.Task {
+		t.Helper()
+		createdTask := doAdminJSON(t, client, csrf, http.MethodPost, server.URL+"/api/tasks", map[string]any{
+			"source": "socks5://example.com:1080#permission-test", "client_ids": []string{clientID},
+		})
+		if createdTask.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(createdTask.Body)
+			createdTask.Body.Close()
+			t.Fatalf("task create status = %d: %s", createdTask.StatusCode, body)
+		}
+		var payload struct {
+			Task store.Task `json:"task"`
+		}
+		if err := json.NewDecoder(createdTask.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		createdTask.Body.Close()
+		return payload.Task
+	}
+	ownerTask := createTask(ownerClient, ownerCSRF, ownerPayload.Client.ID)
+	operatorTask := createTask(operatorClient, operatorCSRF, ownPayload.Client.ID)
+
+	listResponse := doAdminJSON(t, operatorClient, operatorCSRF, http.MethodGet, server.URL+"/api/tasks", nil)
+	var operatorTasks []store.Task
+	if err := json.NewDecoder(listResponse.Body).Decode(&operatorTasks); err != nil {
+		t.Fatal(err)
+	}
+	listResponse.Body.Close()
+	if listResponse.StatusCode != http.StatusOK || len(operatorTasks) != 1 || operatorTasks[0].ID != operatorTask.ID {
+		t.Fatalf("operator task list = status:%d tasks:%+v", listResponse.StatusCode, operatorTasks)
+	}
+
+	for _, path := range []string{
+		"/tasks/" + ownerTask.ID,
+		"/api/tasks/" + ownerTask.ID,
+		"/api/tasks/" + ownerTask.ID + "/events",
+		"/api/tasks/" + ownerTask.ID + "/results.csv",
+	} {
+		forbidden, err := operatorClient.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forbidden.Body.Close()
+		if forbidden.StatusCode != http.StatusNotFound {
+			t.Fatalf("operator access %s status = %d", path, forbidden.StatusCode)
+		}
+	}
+	forbiddenCancel := doAdminJSON(t, operatorClient, operatorCSRF, http.MethodPost, server.URL+"/api/tasks/"+ownerTask.ID+"/cancel", nil)
+	forbiddenCancel.Body.Close()
+	if forbiddenCancel.StatusCode != http.StatusNotFound {
+		t.Fatalf("operator cancel owner task status = %d", forbiddenCancel.StatusCode)
+	}
+
+	detail := doAdminJSON(t, operatorClient, operatorCSRF, http.MethodGet, server.URL+"/api/tasks/"+operatorTask.ID, nil)
+	var detailPayload struct {
+		Targets []store.TaskTarget `json:"targets"`
+	}
+	if err := json.NewDecoder(detail.Body).Decode(&detailPayload); err != nil {
+		t.Fatal(err)
+	}
+	detail.Body.Close()
+	if detail.StatusCode != http.StatusOK || len(detailPayload.Targets) != 1 || detailPayload.Targets[0].ClientID != ownPayload.Client.ID {
+		t.Fatalf("operator own task detail = status:%d payload:%+v", detail.StatusCode, detailPayload)
+	}
+
+	ownerList := doAdminJSON(t, ownerClient, ownerCSRF, http.MethodGet, server.URL+"/api/tasks", nil)
+	var allTasks []store.Task
+	if err := json.NewDecoder(ownerList.Body).Decode(&allTasks); err != nil {
+		t.Fatal(err)
+	}
+	ownerList.Body.Close()
+	if ownerList.StatusCode != http.StatusOK || len(allTasks) != 2 {
+		t.Fatalf("owner task list = status:%d tasks:%+v", ownerList.StatusCode, allTasks)
+	}
+	for _, task := range []store.Task{ownerTask, operatorTask} {
+		canceled := doAdminJSON(t, ownerClient, ownerCSRF, http.MethodPost, server.URL+"/api/tasks/"+task.ID+"/cancel", nil)
+		canceled.Body.Close()
+		if canceled.StatusCode != http.StatusOK {
+			t.Fatalf("owner cancel task %s status = %d", task.ID, canceled.StatusCode)
+		}
+	}
 }
 
 func newTestHTTPServer(t *testing.T, application *App) *httptest.Server {

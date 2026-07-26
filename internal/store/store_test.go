@@ -38,7 +38,7 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 		t.Fatalf("client authentication failed: %+v %v", authenticated, err)
 	}
 	// Threads 留为零，验证 Go 层默认值与数据库 schema 默认值均为 4。
-	task := Task{ID: model.NewID(), Status: "queued", CandidateCount: 10, TopN: 3, ProxyCount: 1, ClientCount: 1, CreatedAt: now()}
+	task := Task{ID: model.NewID(), OwnerAdminID: "admin-test", Status: "queued", CandidateCount: 10, TopN: 3, ProxyCount: 1, ClientCount: 1, ImportErrorCount: 2, CreatedAt: now()}
 	if err := database.CreateTask(ctx, task, []string{client.ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +59,12 @@ func TestStoreClientTaskAndResult(t *testing.T) {
 		t.Fatalf("unsafe persistence boundary result: %+v", results[0])
 	}
 	storedTask, err := database.GetTask(ctx, task.ID)
-	if err != nil || storedTask.Threads != 4 {
+	if err != nil || storedTask.Threads != 4 || storedTask.OwnerAdminID != "admin-test" || storedTask.ImportErrorCount != 2 {
 		t.Fatalf("unexpected default thread count: %+v %v", storedTask, err)
+	}
+	targets, err := database.ListTaskTargets(ctx, task.ID)
+	if err != nil || len(targets) != 1 || targets[0].ClientID != client.ID || targets[0].ClientName != client.Name || targets[0].Status != "queued" {
+		t.Fatalf("unexpected task targets: %+v %v", targets, err)
 	}
 	if err := database.RevokeClient(ctx, client.ID); err != nil {
 		t.Fatal(err)
@@ -126,8 +130,12 @@ func TestOpenMigratesTaskThreads(t *testing.T) {
 	}
 	defer database.Close()
 	task, err := database.GetTask(ctx, "legacy")
-	if err != nil || task.Threads != 4 {
+	if err != nil || task.Threads != 4 || task.OwnerAdminID != "" || task.ImportErrorCount != 0 {
 		t.Fatalf("legacy task was not migrated: %+v %v", task, err)
+	}
+	operatorTasks, err := database.ListTasksForAdmin(ctx, "ordinary-admin", false, 10)
+	if err != nil || len(operatorTasks) != 0 {
+		t.Fatalf("legacy task visible to ordinary administrator: %+v %v", operatorTasks, err)
 	}
 }
 

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"smalux-speedtest/internal/store"
 )
 
 // listTasks 返回最近 100 个任务摘要，避免管理页面一次读取无限历史记录。
 func (a *App) listTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := a.store.ListTasks(r.Context(), 100)
+	session, _ := a.session(r)
+	tasks, err := a.store.ListTasksForAdmin(r.Context(), session.userID, session.isOwner, 100)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -32,6 +35,8 @@ func (a *App) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	session, _ := a.session(r)
+	input.OwnerAdminID = session.userID
 	created, err := a.startTask(r.Context(), input)
 	if err != nil {
 		var requestError *taskRequestError
@@ -51,9 +56,8 @@ func (a *App) createTask(w http.ResponseWriter, r *http.Request) {
 
 // getTask 返回一个任务摘要及其所有已持久化测速结果，用于详情页首次加载和手动刷新。
 func (a *App) getTask(w http.ResponseWriter, r *http.Request) {
-	task, err := a.store.GetTask(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, errors.New("task not found"))
+	task, ok := a.authorizedTask(w, r)
+	if !ok {
 		return
 	}
 	results, err := a.store.ListResults(r.Context(), task.ID)
@@ -61,12 +65,20 @@ func (a *App) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"task": task, "results": results})
+	targets, err := a.store.ListTaskTargets(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task, "results": results, "targets": targets})
 }
 
 // cancelTask 只允许取消 Hub 中仍活跃的任务。Hub 会向在线目标发送取消消息、更新数据库
 // 状态并广播 SSE；已经聚合为终态的任务不再留在 Hub，因此返回 409 Conflict。
 func (a *App) cancelTask(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizedTask(w, r); !ok {
+		return
+	}
 	if err := a.hub.CancelTask(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
@@ -80,6 +92,9 @@ func (a *App) cancelTask(w http.ResponseWriter, r *http.Request) {
 // 接收进度、结果和状态增量。15 秒 keepalive 注释用于穿过反向代理的空闲连接回收机制，
 // X-Accel-Buffering 则请求 Nginx 等代理不要缓存事件流。
 func (a *App) taskEvents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizedTask(w, r); !ok {
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, errors.New("streaming unsupported"))
@@ -115,7 +130,11 @@ func (a *App) taskEvents(w http.ResponseWriter, r *http.Request) {
 // 开头写入 BOM 以改善常见表格软件对中文 UTF-8 文件的识别；用户可控文本字段还会经
 // csvCell 处理，防止以公式前缀开头的值在表格软件中被执行。
 func (a *App) resultsCSV(w http.ResponseWriter, r *http.Request) {
-	results, err := a.store.ListResults(r.Context(), r.PathValue("id"))
+	task, ok := a.authorizedTask(w, r)
+	if !ok {
+		return
+	}
+	results, err := a.store.ListResults(r.Context(), task.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -133,4 +152,21 @@ func (a *App) resultsCSV(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writer.Flush()
+}
+
+// authorizedTask applies the same ownership rule to every task surface. Returning
+// 404 for both missing and unauthorized IDs avoids exposing another administrator's
+// task identifiers.
+func (a *App) authorizedTask(w http.ResponseWriter, r *http.Request) (store.Task, bool) {
+	task, err := a.store.GetTask(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, errors.New("task not found"))
+		return store.Task{}, false
+	}
+	session, ok := a.session(r)
+	if !ok || (!session.isOwner && (task.OwnerAdminID == "" || task.OwnerAdminID != session.userID)) {
+		writeError(w, http.StatusNotFound, errors.New("task not found"))
+		return store.Task{}, false
+	}
+	return task, true
 }

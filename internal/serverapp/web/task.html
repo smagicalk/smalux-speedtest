@@ -27,6 +27,17 @@
       <div class="progress-track"><span id="progress-bar"></span></div>
       <div class="progress-foot"><span id="progress-count">0 条结果</span><span id="progress-updated">尚未更新</span></div>
     </section>
+    <div id="import-summary" class="task-import-summary hidden" role="status"></div>
+    <!-- 目标状态来自 task_targets，便于定位等待、离线或失败的执行节点。 -->
+    <section class="section">
+      <div class="section-heading"><div><h2>Client 状态</h2><p id="target-count">0 个目标</p></div></div>
+      <div class="table-wrap target-table-wrap">
+        <table class="target-table">
+          <thead><tr><th>Client</th><th>状态</th><th>说明</th></tr></thead>
+          <tbody id="targets-body"><tr><td colspan="3" class="empty">正在加载</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     <!-- 初始结果来自详情 API，后续结果由 SSE 按数据库唯一键增量合并。 -->
     <section class="section">
       <div class="section-heading"><div><h2>测速结果</h2><p id="result-count">0 条结果</p></div></div>

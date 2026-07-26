@@ -1,4 +1,4 @@
-import { $, copyText, escapeHTML, redirectToLogin, showToast, statusText } from './ui.js';
+import { $, copyText, escapeHTML, fetchWithTimeout, redirectToLogin, showToast, statusText } from './ui.js';
 
 // CSRF 令牌由服务端模板注入。所有改变服务端状态的请求都必须携带该值，
 // 防止其他站点借用管理员浏览器中的会话发起跨站请求。
@@ -14,7 +14,8 @@ const api = async (url, options = {}) => {
   const headers = { ...(options.headers || {}) };
   if (options.body) headers['Content-Type'] = 'application/json';
   if (options.method && options.method !== 'GET') headers['X-CSRF-Token'] = csrf;
-  const response = await fetch(url, { ...options, headers });
+  const {timeoutMS = 12000, ...fetchOptions} = options;
+  const response = await fetchWithTimeout(url, { ...fetchOptions, headers }, timeoutMS);
   if (redirectToLogin(response)) throw new Error('登录已失效');
   let data = null;
   try { data = response.status === 204 ? null : await response.json(); } catch (_) { /* 非 JSON 错误由下方统一处理。 */ }
@@ -338,7 +339,7 @@ $('#task-form').addEventListener('submit', async event => {
   $('#task-form-state').textContent = '提交中';
   $('#task-form-state').className = 'sync-status busy';
   try {
-    const result = await api('/api/tasks', {method:'POST', body:JSON.stringify({
+    const result = await api('/api/tasks', {method:'POST', timeoutMS:25000, body:JSON.stringify({
       source, subscription_url: subscriptionURL, client_ids: clientIDs,
       candidate_count: Number(form.get('candidate_count')), top_n: Number(form.get('top_n')), threads: Number(form.get('threads'))
     })});
@@ -358,4 +359,10 @@ $('#task-form').addEventListener('submit', async event => {
 updateSourceCount();
 syncTopNOptions();
 refresh().catch(() => {});
-setInterval(() => refresh().catch(() => {}), 15000);
+const refreshTimer = window.setInterval(() => {
+  if (!document.hidden) refresh().catch(() => {});
+}, 15000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refresh().catch(() => {});
+});
+window.addEventListener('beforeunload', () => window.clearInterval(refreshTimer));

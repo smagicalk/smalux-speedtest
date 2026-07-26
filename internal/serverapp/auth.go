@@ -177,6 +177,9 @@ func (a *App) requireOwner(next http.Handler) http.Handler {
 
 // taskPage 渲染单个任务详情页；任务数据和后续增量事件由前端 API/SSE 获取。
 func (a *App) taskPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizedTask(w, r); !ok {
+		return
+	}
 	session, _ := a.session(r)
 	_ = a.template.ExecuteTemplate(w, "task.html", struct {
 		CSRF   string

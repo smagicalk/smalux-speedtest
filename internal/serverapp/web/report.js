@@ -1,3 +1,5 @@
+import { resultErrorText } from './ui.js';
+
 // exportResultImage 在浏览器内生成 PNG，不把结果再次上传给服务端。
 // 报告使用固定 1800px 表格宽度保证列对齐，并限制为 72 行，避免超大任务生成超过
 // 浏览器 Canvas 尺寸或内存上限的图片；完整结果数仍会显示在页脚且可通过 CSV 导出。
@@ -77,7 +79,7 @@ export function exportResultImage(taskData, results, taskID) {
     const cells = [
       // 前四列由下一阶段按组绘制，这里留空以模拟纵向合并单元格。
       '', '', '', '', `${item.speed_server_name || '—'}${item.sponsor ? ` · ${item.sponsor}` : ''}`,
-      formatDelay(item.latency_ms), formatDelay(item.jitter_ms), formatImageSpeed(item.download_bps), formatImageSpeed(item.upload_bps), item.error || '完成'
+      formatDelay(item.latency_ms), formatDelay(item.jitter_ms), formatImageSpeed(item.download_bps), formatImageSpeed(item.upload_bps), item.error ? resultErrorText(item.error) : '完成'
     ];
     ctx.font = '16px Arial, "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
     ctx.fillStyle = item.error ? '#a82424' : '#172126';

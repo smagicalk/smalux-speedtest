@@ -44,9 +44,20 @@ func (r telegramTaskRunner) Submit(ctx context.Context, request telegrambot.Task
 	for _, client := range selected {
 		clientIDs = append(clientIDs, client.ID)
 	}
+	ownerAdminID := ""
+	admins, listErr := r.app.store.ListAdminUsers(ctx)
+	if listErr != nil {
+		return telegrambot.Task{}, listErr
+	}
+	for _, admin := range admins {
+		if admin.IsOwner {
+			ownerAdminID = admin.ID
+			break
+		}
+	}
 	created, err := r.app.startTask(ctx, taskRequest{
 		Source: request.Source, SubscriptionURL: request.SubscriptionURL, ClientIDs: clientIDs,
-		CandidateCount: request.CandidateCount, TopN: request.TopN, Threads: request.Threads,
+		CandidateCount: request.CandidateCount, TopN: request.TopN, Threads: request.Threads, OwnerAdminID: ownerAdminID,
 	})
 	if err != nil {
 		var requestError *taskRequestError

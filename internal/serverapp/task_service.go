@@ -21,6 +21,7 @@ type taskRequest struct {
 	CandidateCount  int      `json:"candidate_count"`
 	TopN            int      `json:"top_n"`
 	Threads         int      `json:"threads"`
+	OwnerAdminID    string   `json:"-"`
 }
 
 // taskCreation 汇总成功创建的持久化任务和非致命的逐条导入错误。
@@ -82,8 +83,8 @@ func (a *App) startTask(ctx context.Context, input taskRequest) (taskCreation, e
 	}
 
 	task := store.Task{
-		ID: model.NewID(), Status: "queued", CandidateCount: input.CandidateCount, TopN: input.TopN, Threads: input.Threads,
-		ProxyCount: len(parsed.Proxies), ClientCount: len(clientIDs), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		ID: model.NewID(), OwnerAdminID: input.OwnerAdminID, Status: "queued", CandidateCount: input.CandidateCount, TopN: input.TopN, Threads: input.Threads,
+		ProxyCount: len(parsed.Proxies), ClientCount: len(clientIDs), ImportErrorCount: len(parsed.Errors), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	assignment := model.Assignment{
 		TaskID: task.ID, Proxies: parsed.Proxies, CandidateCount: input.CandidateCount,

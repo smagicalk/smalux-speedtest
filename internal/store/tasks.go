@@ -27,8 +27,11 @@ func (s *Store) CreateTask(ctx context.Context, task Task, clientIDs []string) e
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,status,candidate_count,top_n,threads,proxy_count,client_count,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		task.ID, task.Status, task.CandidateCount, task.TopN, task.Threads, task.ProxyCount, len(clientIDs), task.CreatedAt)
+	if task.ImportErrorCount < 0 {
+		task.ImportErrorCount = 0
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,owner_admin_id,status,candidate_count,top_n,threads,proxy_count,client_count,import_error_count,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, task.OwnerAdminID, task.Status, task.CandidateCount, task.TopN, task.Threads, task.ProxyCount, len(clientIDs), task.ImportErrorCount, task.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -114,10 +117,28 @@ func (s *Store) TargetSummary(ctx context.Context, taskID string) (completed, fa
 // ListTasks 按创建时间倒序返回最近任务。
 // limit 异常时回落到 50，并以 200 为硬上限，避免管理 API 一次读取无界历史数据。
 func (s *Store) ListTasks(ctx context.Context, limit int) ([]Task, error) {
+	return s.listTasks(ctx, "", true, limit)
+}
+
+// ListTasksForAdmin returns all tasks to the Owner and only owned tasks to an
+// ordinary administrator. Legacy tasks with no owner remain Owner-only.
+func (s *Store) ListTasksForAdmin(ctx context.Context, adminID string, isOwner bool, limit int) ([]Task, error) {
+	return s.listTasks(ctx, adminID, isOwner, limit)
+}
+
+func (s *Store) listTasks(ctx context.Context, adminID string, all bool, limit int) ([]Task, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,status,candidate_count,top_n,threads,proxy_count,client_count,error,created_at,started_at,finished_at FROM tasks ORDER BY created_at DESC LIMIT ?`, limit)
+	query := `SELECT id,owner_admin_id,status,candidate_count,top_n,threads,proxy_count,client_count,import_error_count,error,created_at,started_at,finished_at FROM tasks`
+	args := []any{}
+	if !all {
+		query += ` WHERE owner_admin_id=?`
+		args = append(args, adminID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +146,7 @@ func (s *Store) ListTasks(ctx context.Context, limit int) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var task Task
-		if err := rows.Scan(&task.ID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt); err != nil {
+		if err := rows.Scan(&task.ID, &task.OwnerAdminID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.ImportErrorCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt); err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, normalizePersistedTaskRead(task))
@@ -136,10 +157,32 @@ func (s *Store) ListTasks(ctx context.Context, limit int) ([]Task, error) {
 // GetTask 按 ID 返回单个任务摘要；不存在时返回 sql.ErrNoRows。
 func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	var task Task
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,candidate_count,top_n,threads,proxy_count,client_count,error,created_at,started_at,finished_at FROM tasks WHERE id=?`, id).
-		Scan(&task.ID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,owner_admin_id,status,candidate_count,top_n,threads,proxy_count,client_count,import_error_count,error,created_at,started_at,finished_at FROM tasks WHERE id=?`, id).
+		Scan(&task.ID, &task.OwnerAdminID, &task.Status, &task.CandidateCount, &task.TopN, &task.Threads, &task.ProxyCount, &task.ClientCount, &task.ImportErrorCount, &task.Error, &task.CreatedAt, &task.StartedAt, &task.FinishedAt)
 	if err != nil {
 		return Task{}, err
 	}
 	return normalizePersistedTaskRead(task), nil
+}
+
+// ListTaskTargets returns the current per-Client execution state without exposing
+// Client credentials or task assignments.
+func (s *Store) ListTaskTargets(ctx context.Context, taskID string) ([]TaskTarget, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target.client_id,client.name,target.status,target.error
+		FROM task_targets AS target JOIN clients AS client ON client.id=target.client_id
+		WHERE target.task_id=? ORDER BY client.name,target.client_id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []TaskTarget
+	for rows.Next() {
+		var target TaskTarget
+		if err := rows.Scan(&target.ClientID, &target.ClientName, &target.Status, &target.Error); err != nil {
+			return nil, err
+		}
+		target.Error = normalizePersistedTaskDetail(target.Error)
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
 }

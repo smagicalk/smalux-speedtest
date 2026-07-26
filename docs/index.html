@@ -181,7 +181,7 @@ sudo ./smalux.sh uninstall</code></pre>
         <p>VMess、VLESS 和 Trojan 的 V2Ray transport 支持默认 TCP（省略或使用 <code>tcp</code>、<code>raw</code>、<code>none</code>）、WebSocket、gRPC、HTTP/H2 和 HTTPUpgrade。其他 transport 会在导入阶段被拒绝，不会静默退化成 TCP；正式 Client 当前不启用 KCP 和 V2Ray QUIC。这不影响使用独立原生 QUIC 实现的 Hysteria、Hysteria2 与 TUIC。</p>
         <div class="callout"><strong>不支持：</strong>SSR 已被 sing-box 1.13 移除；Naive 会引入体积较大的多平台 Cronet 运行库，因此项目有意不注册。其他未列出的 URI 会返回协议不支持。</div>
         <p>任务参数包括候选测速节点数量、Top N 下载/上传节点和线程数。每个 Client 的任务参数由 Server 下发，Client 命令不需要重复配置这些选项。</p>
-        <p>任务详情页提供实时 SSE 进度、结果表格、CSV 和品牌化 PNG 报告。Bot 创建的任务会编辑同一条进度消息，并在完成后引用原始请求回复图片。</p>
+        <p>任务详情页提供实时 SSE 进度、每个目标 Client 的执行状态、结果表格、CSV 和品牌化 PNG 报告。存在无效代理行时只展示成功与跳过数量，不持久化原始输入或导入明细。Bot 创建的任务会编辑同一条进度消息，并在完成后引用原始请求回复图片。</p>
       </section>
 
       <section id="bot">
@@ -213,7 +213,8 @@ sudo ./smalux.sh uninstall</code></pre>
           <li>原始订阅 URL、订阅正文、sing-box outbound、代理密码和私钥不写入 SQLite。</li>
           <li>历史结果只保留脱敏地址、节点名称、协议、测速节点和测量数据。</li>
           <li>日志使用固定错误类别，不输出代理配置、请求正文、远端地址和数据库路径。</li>
-          <li>管理员通过邀请码注册；每个管理员可以在账户安全页面修改自己的密码，改密会使其他会话立即失效。</li>
+          <li>管理员通过邀请码注册；普通管理员只能查看和操作自己创建的任务，Owner 可以管理全部任务。</li>
+          <li>每个管理员可以在账户安全页面修改自己的密码，改密会使其他会话立即失效。</li>
         </ul>
         <p>安全边界不能替代网络加密。公共服务建议使用同机 HTTPS/WSS 反向代理，并限制管理控制台访问来源。</p>
       </section>

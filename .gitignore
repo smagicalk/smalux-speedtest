@@ -12,6 +12,9 @@ dist/
 coverage.*
 *.coverprofile
 profile.cov
+node_modules/
+test-results/
+ui-preview.spec.js
 .tmp-go-cache/
 .tmp-go-tmp/
 

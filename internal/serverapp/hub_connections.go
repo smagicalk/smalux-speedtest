@@ -142,13 +142,18 @@ func (h *Hub) requeueTarget(ctx context.Context, taskID, clientID, detail string
 		task.transition.Unlock()
 		return
 	}
+	requeued := false
 	h.mu.Lock()
 	if h.tasks[taskID] == task && task.targets[clientID] == current {
 		h.releaseActiveWorkLocked(task.work[clientID])
 		task.targets[clientID] = "queued"
+		requeued = true
 	}
 	h.mu.Unlock()
 	task.transition.Unlock()
+	if requeued {
+		h.publish(taskID, taskEvent{Type: "target", ClientID: clientID, TargetStatus: "queued", Message: detail})
+	}
 	// 断线窗口内已有新 peer 登记时立即参与全局调度。
 	h.schedule()
 }
