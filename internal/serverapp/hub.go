@@ -51,6 +51,10 @@ type Hub struct {
 	log *slog.Logger
 	// allowInsecureClientWebSocket 仅由显式启动配置开启，允许远程 ws:// Client。
 	allowInsecureClientWebSocket bool
+	// credentialMu linearizes the final token check/peer registration with token
+	// rotation. This prevents a handshake authenticated just before rotation from
+	// registering with the superseded credential after the current peer is closed.
+	credentialMu sync.Mutex
 
 	// mu 保护 peers、tasks、subscribers 及 runtimeTask.targets。
 	mu sync.RWMutex
@@ -121,7 +125,8 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "secure websocket required", http.StatusUpgradeRequired)
 		return
 	}
-	client, err := h.store.AuthenticateClient(r.Context(), bearerToken(r.Header.Get("Authorization")))
+	token := bearerToken(r.Header.Get("Authorization"))
+	client, err := h.store.AuthenticateClient(r.Context(), token)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -175,7 +180,8 @@ func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	writeCancel()
 	// register 可能替换同一 Client 的旧连接；defer unregister 通过指针身份检查，确保
 	// 旧连接退出时不会误删刚登记的新连接。
-	if !h.register(connected) {
+	if !h.registerAuthenticated(r.Context(), connected, token) {
+		conn.Close(websocket.StatusPolicyViolation, "client token changed")
 		return
 	}
 	defer h.unregister(connected)

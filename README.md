@@ -2,7 +2,11 @@
 
 Distributed proxy speed testing with a central server and remote clients. The server dispatches one-time proxy configurations over WebSocket; clients test public Speedtest.net endpoints through an embedded sing-box outbound.
 
-Project documentation: [`docs/index.html`](docs/index.html). When GitHub Pages is configured to publish from the branch's `/docs` directory, the same file is the documentation home page.
+Project documentation: [`docs/index.html`](docs/index.html). It includes the
+[runtime call flow](docs/index.html#call-flow), [extension recipes](docs/index.html#extension),
+and [local development and test workflow](docs/index.html#testing). When GitHub Pages is
+configured to publish from the branch's `/docs` directory, the same file is the
+documentation home page.
 
 ## Build
 
@@ -73,6 +77,12 @@ SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' go run -tags with_utls ./client \
 `SMALUX_CLIENT_TOKEN` is the preferred token source and takes precedence when it is non-empty. The `-token` flag remains only as a compatibility fallback; command-line secrets may be visible in process listings and should not be used for new deployments.
 
 The Client only needs the Server WebSocket URL and its one-time token. Its display name and labels are maintained in the Server dashboard; task candidate count, transfer-server selection, and thread count are sent with each assignment.
+
+Client tokens cannot be read back because the Server stores only their hashes. When moving a
+Client to another host or replacing a lost token, use **Re-authorize** in the dashboard. The
+replacement token is displayed once, the old token becomes invalid immediately, and the Client
+ID, labels, task history, and result associations remain unchanged. Update the new host's
+`SMALUX_CLIENT_TOKEN` and restart that Client.
 
 For a Linux systemd installation, run `scripts/smalux.sh` as root. The interactive menu can install or update a Server/Client, show service status, and uninstall while optionally preserving the database; the `start` and `stop` subcommands control service state without changing boot enablement. It detects amd64/arm64, downloads the matching latest Release archive, verifies `SHA256SUMS`, stores service configuration under `/etc/smalux-speedtest`, and never puts the Client Token or administrator password in an `ExecStart` argument.
 

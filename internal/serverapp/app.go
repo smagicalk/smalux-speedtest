@@ -173,6 +173,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/clients", a.requireAdmin(http.HandlerFunc(a.listClients)))
 	mux.Handle("POST /api/clients", a.requireAdmin(a.csrf(http.HandlerFunc(a.createClient))))
 	mux.Handle("PATCH /api/clients/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.updateClient))))
+	mux.Handle("POST /api/clients/{id}/token", a.requireAdmin(a.csrf(http.HandlerFunc(a.rotateClientToken))))
 	mux.Handle("DELETE /api/clients/{id}", a.requireAdmin(a.csrf(http.HandlerFunc(a.revokeClient))))
 	mux.Handle("GET /api/admin-users", a.requireAdmin(a.requireOwner(http.HandlerFunc(a.listAdminUsers))))
 	mux.Handle("POST /api/admin-users", a.requireAdmin(a.requireOwner(a.csrf(http.HandlerFunc(a.createAdminUser)))))

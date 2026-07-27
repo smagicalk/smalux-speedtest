@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -73,6 +74,26 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) {
 	}
 	a.hub.UpdateClientMetadata(client)
 	writeJSON(w, http.StatusOK, client)
+}
+
+// rotateClientToken preserves the Client identity while replacing its bearer
+// credential. The plaintext replacement is returned exactly once in this response.
+func (a *App) rotateClientToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !a.canManageClient(r, id) {
+		writeError(w, http.StatusForbidden, errors.New("只能重新授权自己创建的 Client"))
+		return
+	}
+	token, err := a.hub.RotateClientToken(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 // revokeClient 禁用持久化凭据，并通知 Hub 断开当前连接、终止该 Client 的活动目标。

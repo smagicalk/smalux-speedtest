@@ -137,6 +137,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
         <pre><button class="copy" type="button">复制</button><code>SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' \
   ./dist/smalux-client-linux-amd64 \
   -server wss://speed.example.com/ws/client</code></pre>
+        <p>Client Token 只在创建或重新授权后的弹窗中显示一次。Server 只保存不可逆摘要，因此不能“查看旧 Token”。迁移机器或凭据遗失时，在 Client 列表中选择<strong>重新授权</strong>，把新 Token 写入目标机器的 <code>SMALUX_CLIENT_TOKEN</code> 后重启 Client。旧 Token 会立即失效，当前连接会被断开，但 Client ID、名称、标签和历史结果保持不变。</p>
         <div class="callout"><strong>临时明文连接：</strong>只有在可信内网测试时才启用 Server 的 <code>-allow-insecure-ws</code>。公网部署必须使用 HTTPS/WSS，否则 Token 和测速任务会被网络路径看到。</div>
         <h3>一键安装服务</h3>
         <p>Linux 主机可以使用仓库中的 <code>scripts/smalux.sh</code>。脚本从最新 GitHub Release 下载对应架构包并校验 SHA256，然后交互式创建 systemd 服务。</p>
@@ -268,6 +269,16 @@ web browser <- JSON + SSE API -> serverapp</code></pre>
             <tr><td>Server 重启</td><td>内存 Assignment 不恢复；启动迁移扫描遗留活动任务和目标。</td><td>统一标记 failed，避免永久 queued/running。</td></tr>
           </tbody>
         </table>
+
+        <h3>6. Client 重新授权与迁移</h3>
+        <ol class="sequence">
+          <li><strong>管理员触发</strong>：Dashboard 向 <code>POST /api/clients/{id}/token</code> 发送带 Session 和 CSRF 的请求；服务端再次执行 Client 所有权校验。</li>
+          <li><strong>Store 原子轮换</strong>：生成新的高熵 Token，只把摘要写入原 Client 记录，不创建新 ID，也不改名称、标签和历史关联。</li>
+          <li><strong>Hub 失效旧连接</strong>：认证摘要更新后断开当前 peer，并按既有重排规则处理活动工作；旧 Token 后续握手会失败。</li>
+          <li><strong>明文只返回一次</strong>：API 只在本次成功响应返回新 Token，Dashboard 不缓存、不提供再次查看；关闭弹窗后只能再次轮换。</li>
+          <li><strong>目标机器接管</strong>：通过服务环境文件或 Secret 管理器设置 <code>SMALUX_CLIENT_TOKEN</code>，保留同一 <code>SMALUX_SERVER_URL</code>，重启后完成 hello/welcome 即恢复在线。</li>
+        </ol>
+        <div class="callout"><strong>迁移顺序：</strong>先准备目标机器和 Client 二进制，再执行重新授权并立即写入新 Token，最后启动目标 Client。轮换会中断旧机器，避免两台主机同时持有有效身份。</div>
       </section>
 
       <section id="state-model">
@@ -413,6 +424,28 @@ queued/running ----> failed (timeout/restart)</code></pre>
           <li>最后接 UI/SSE 展示，并用真实 Server/Client 流程验证断线和终态。</li>
           <li>完成普通测试、发布标签测试、race、vet、构建和文档同步后再提交。</li>
         </ol>
+
+        <h3>扩展配方与验收点</h3>
+        <table class="file-map">
+          <thead><tr><th>扩展类型</th><th>实现流程与完成标准</th></tr></thead>
+          <tbody>
+            <tr><td>新增 HTTP API</td><td>先定义请求、响应和错误状态，再在 <code>routes()</code> 绑定精确方法；handler 只做解码、认证/归属和响应，业务进入共享 service，持久化进入 Store。测试至少覆盖成功、未登录、缺 CSRF、跨管理员访问、畸形/超大正文和 Store 失败。</td></tr>
+            <tr><td>新增 WebSocket 消息</td><td>在 <code>wire</code> 定义 type/envelope，在 <code>model</code> 定义有界 payload；同步 Server 读写处理与 Client 状态机，验证未知、重复、迟到和超大消息。只要旧端会误解新语义，就提升协议版本并同步发布两端。</td></tr>
+            <tr><td>新增代理协议</td><td>先用表驱动测试固定 URI 的合法/非法样本，再实现 importer 到 <code>ProxySpec</code> 的无损映射；在 Client 注册 sing-box outbound，验证目标 OS/ARCH 和 <code>with_utls</code> 构建。错误只能暴露固定类别，不得包含原 URI、主机或凭据。</td></tr>
+            <tr><td>新增任务参数</td><td>按“网页/Bot 输入 -> <code>startTask</code> 默认值与范围 -> Store -> Assignment -> Executor”贯穿实现。为旧数据库提供确定默认值，检查 wire 大小，并验证网页和 Telegram 创建出的任务语义一致。</td></tr>
+            <tr><td>新增持久化字段</td><td>同时更新新库 schema 和旧库幂等迁移，再更新全部 Scan/写入/导出路径。用旧 schema fixture 连续启动两次，确认迁移可重复且不会把订阅、outbound、Token 或任意敏感文本落库。</td></tr>
+            <tr><td>新增实时 UI 字段</td><td>先确定 REST 快照中的权威字段，再决定是否增加 SSE 增量；前端按稳定键和 revision 合并。验证事件缺失、乱序、重连、终态、长文本、空态以及桌面/移动布局，重建并重启 Server 以刷新嵌入资源。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>扩展完成定义</h3>
+        <ul>
+          <li>正常路径、边界输入、权限失败、断线/重试和旧数据升级都有自动化覆盖。</li>
+          <li>Server/Client 兼容策略、默认值、限制、状态转换与回滚路径已经明确。</li>
+          <li>日志、数据库、SSE、CSV、PNG 和错误响应均未新增敏感数据出口。</li>
+          <li>受影响的网页、Telegram、API、WebSocket 和发布构建已做端到端验证。</li>
+          <li>README、本文档的支持矩阵和运维步骤与实现同步更新。</li>
+        </ul>
       </section>
 
       <section id="testing">
@@ -429,6 +462,31 @@ SMALUX_CLIENT_TOKEN='TOKEN_SHOWN_ONCE' \
   go run -tags with_utls ./client \
   -server ws://127.0.0.1:18080/ws/client</code></pre>
         <p class="small">该示例只监听 loopback；不要在共享主机复用示例密码或 Token。调试迁移时使用数据库副本，不要对生产 SQLite 直接试验。</p>
+
+        <h3>从零完成一次开发联调</h3>
+        <ol class="sequence">
+          <li><strong>准备工具链</strong>：安装 <code>go.mod</code> 指定的 Go 版本，执行 <code>go mod download</code>，再用 <code>make build</code> 确认 Server 和带 <code>with_utls</code> 的 Client 都能构建。</li>
+          <li><strong>启动隔离 Server</strong>：使用 loopback 监听和独立临时数据库；首次设置 <code>SMALUX_ADMIN_PASSWORD</code>，后续该密码由 SQLite 中的 bcrypt 摘要验证。</li>
+          <li><strong>创建执行端</strong>：登录网页创建 Client，立即把只显示一次的 Token 注入第二个终端的环境变量；不要放进 shell history、源码、测试 fixture 或命令行参数。</li>
+          <li><strong>确认连接</strong>：Client 日志应完成 WebSocket 握手，Dashboard 显示在线；若失败，先检查 URL 的 <code>ws/wss</code>、协议版本、Token 是否已轮换和 Server 是否允许该明文来源。</li>
+          <li><strong>跑最小任务</strong>：用一条测试代理、一个 Client 和较小参数创建任务，在浏览器 Network 中同时观察 <code>POST /api/tasks</code>、详情 REST、SSE 与 Client 日志。</li>
+          <li><strong>制造失败路径</strong>：任务执行时停止 Client，确认 target 回到 queued；重启后确认重排。再验证取消、无效输入和 Token 重新授权，确保状态最终收敛。</li>
+          <li><strong>提交前收口</strong>：运行与变更范围匹配的测试矩阵，检查 diff 中没有密钥、数据库、日志或构建产物，并同步文档。</li>
+        </ol>
+
+        <h3>日常开发循环</h3>
+        <pre><button class="copy" type="button">复制</button><code># 先运行受影响包，缩短反馈时间
+go test ./internal/serverapp ./internal/store
+
+# Client 执行器或代理支持发生变化时带发布标签测试
+go test -tags with_utls ./internal/clientapp ./internal/importer
+
+# Web 资源被嵌入 Server；修改后重新启动开发进程
+go run ./server -listen 127.0.0.1:18080 -db /tmp/smalux-dev.db
+
+# 健康检查与进程日志只确认运行态，不替代端到端任务验证
+curl -fsS http://127.0.0.1:18080/healthz</code></pre>
+        <p>建议让每个改动只跨越必要边界：纯导入规则从 importer 测试开始，状态变化从 Store/Hub 测试开始，页面变化从 API 契约和浏览器行为开始。不要依赖生产数据库或在线订阅作为唯一测试输入。</p>
 
         <h3>提交前验证矩阵</h3>
         <pre><button class="copy" type="button">复制</button><code># 快速反馈：普通能力集

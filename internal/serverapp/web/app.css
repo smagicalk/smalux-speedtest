@@ -36,7 +36,9 @@ a { color: inherit; }
 .brand-mark { display: inline-grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; background: var(--text); color: #fff; font-size: .86rem; font-weight: 800; }
 .brand-block small { display: block; margin-top: 2px; color: var(--muted); }
 .top-actions, .task-actions, .form-actions { display: flex; align-items: center; gap: 8px; }
-.top-actions form { margin: 0; }
+.top-actions form { display: flex; margin: 0; }
+.top-actions .icon-button, .top-actions .quiet, .top-actions .button-link, .top-actions .account-chip { display: inline-flex; height: 34px; min-height: 34px; align-items: center; justify-content: center; padding: 6px 10px; font-size: .78rem; line-height: 1; }
+.top-actions .icon-button { width: 34px; padding: 0; font-size: 1.15rem; }
 .account-chip { max-width: 180px; overflow: hidden; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); color: #3f4b51; font-size: .78rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .account-link { text-decoration: none; transition: border-color .15s, background .15s, color .15s; }
 .account-link:hover { border-color: #86b9ad; background: #eff8f5; color: #146b58; }
@@ -105,12 +107,12 @@ tbody tr:hover { background: #f8fbfa; }
 .client-edit-trigger:hover { background: #edf7f3; }
 .admin-table { min-width: 700px; }
 
-/* 创建任务表单在桌面端使用两列，长输入和订阅地址始终占满整行。 */
+/* 创建任务表单按来源、参数和目标顺序纵向展开，避免参数挤占代理输入空间。 */
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.task-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(380px, .85fr); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.task-layout { display: grid; grid-template-columns: 1fr; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .task-source-pane, .task-options-pane { min-width: 0; padding: 20px; }
 .task-source-pane { display: grid; align-content: start; gap: 16px; }
-.task-options-pane { border-left: 1px solid var(--line); background: var(--surface-soft); }
+.task-options-pane { border-top: 1px solid var(--line); background: var(--surface-soft); }
 .task-target-pane { grid-column: 1 / -1; min-width: 0; padding: 20px; border-top: 1px solid var(--line); }
 .task-target-pane fieldset { margin: 0; }
 .parameter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -150,6 +152,7 @@ legend { margin: 0; }
 .check-option span { overflow: hidden; text-overflow: ellipsis; }
 .form-actions { justify-content: flex-end; margin-top: 18px; }
 .command-field { margin-top: 14px; }
+.token-dialog-note { margin: -2px 0 16px; padding: 9px 11px; border-left: 3px solid var(--warning); background: #fff8e8; color: #6f520e; font-size: .8rem; }
 .settings-workspace { max-width: 1040px; }
 .account-workspace { max-width: 720px; }
 .account-security-section { min-height: 0; }

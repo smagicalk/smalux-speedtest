@@ -153,7 +153,7 @@ async function loadClients({force = false} = {}) {
         <td class="mono">${escapeHTML(item.version || '—')}</td>
         <td>${Object.entries(item.labels || {}).map(([key,value]) => `<span class="tag">${escapeHTML(key)}=${escapeHTML(value)}</span>`).join('') || '—'}</td>
         <td>${dateText(item.last_seen)}</td>
-        <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button">编辑</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" title="永久吊销 Token" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
+        <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button">编辑</button><button class="quiet rotate-client-token" data-id="${escapeHTML(item.id)}" title="生成新 Token 并使旧 Token 失效" type="button">重新授权</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" title="永久吊销 Token" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
       </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无 Client</td></tr>';
     renderClientOptions({syncGroups: true});
     return clients;
@@ -247,6 +247,16 @@ $('#clear-selection').addEventListener('click', () => {
   renderClientOptions();
 });
 
+function showClientToken(token, rotated = false) {
+  $('#token-dialog-title').textContent = rotated ? 'Client 已重新授权' : 'Client 接入信息';
+  $('#token-dialog-note').textContent = rotated ? '新 Token 仅本次显示，旧 Token 已失效。请更新 Client 配置后重新连接。' : 'Token 仅本次显示，请立即保存。';
+  $('#client-token').value = token;
+  $('#client-command').value = windowsClientCommand(token);
+  $('#copy-token').textContent = '复制 Token';
+  $('#copy-client-command').textContent = '复制运行命令';
+  $('#token-dialog').showModal();
+}
+
 // 创建 Client，并把服务端仅返回一次的原始 Token 转交给专用展示对话框。
 $('#client-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -266,11 +276,7 @@ $('#client-form').addEventListener('submit', async event => {
   try {
     const result = await api('/api/clients', {method:'POST', body: JSON.stringify({name: form.get('name'), labels})});
     $('#client-dialog').close();
-    $('#client-token').value = result.token;
-    $('#client-command').value = windowsClientCommand(result.token);
-    $('#copy-token').textContent = '复制 Token';
-    $('#copy-client-command').textContent = '复制运行命令';
-    $('#token-dialog').showModal();
+    showClientToken(result.token);
     formElement.reset();
     await loadClients({force: true});
     showToast('Client 已创建，请立即保存 Token。', 'success', 6000);
@@ -312,6 +318,22 @@ $('#clients-body').addEventListener('click', async event => {
     $('#edit-client-error').classList.add('hidden');
     $('#edit-client-dialog').showModal();
     form.querySelector('[name="name"]').focus();
+    return;
+  }
+  const rotateButton = event.target.closest('.rotate-client-token');
+  if (rotateButton) {
+    const client = clients.find(item => item.id === rotateButton.dataset.id);
+    if (!client?.manageable || !confirm(`确认重新授权 ${client.name}？旧 Token 会立即失效，当前连接也会断开。`)) return;
+    rotateButton.disabled = true;
+    try {
+      const result = await api(`/api/clients/${rotateButton.dataset.id}/token`, {method:'POST'});
+      showClientToken(result.token, true);
+      await loadClients({force: true});
+      showToast('新 Token 已生成，请立即更新 Client 配置。', 'success', 6000);
+    } catch (error) {
+      rotateButton.disabled = false;
+      showToast(error.message, 'error', 6000);
+    }
     return;
   }
   const button = event.target.closest('.revoke-client');

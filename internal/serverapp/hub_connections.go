@@ -9,6 +9,40 @@ import (
 	"smalux-speedtest/internal/store"
 )
 
+// registerAuthenticated repeats authentication immediately before registration.
+// Token rotation uses the same lock, closing the gap between the initial HTTP
+// authentication and the end of the Client hello exchange.
+func (h *Hub) registerAuthenticated(ctx context.Context, connected *peer, token string) bool {
+	h.credentialMu.Lock()
+	defer h.credentialMu.Unlock()
+	current, err := h.store.AuthenticateClient(ctx, token)
+	if err != nil || current.ID != connected.client.ID {
+		return false
+	}
+	connected.client = current
+	return h.register(connected)
+}
+
+// RotateClientToken atomically replaces a Client credential relative to peer
+// registration, then closes the old connection. unregister requeues active work
+// so the same Client identity can resume it after deployment with the new token.
+func (h *Hub) RotateClientToken(ctx context.Context, clientID string) (string, error) {
+	h.credentialMu.Lock()
+	token, err := h.store.RotateClientToken(ctx, clientID)
+	if err != nil {
+		h.credentialMu.Unlock()
+		return "", err
+	}
+	h.mu.RLock()
+	connected := h.peers[clientID]
+	h.mu.RUnlock()
+	h.credentialMu.Unlock()
+	if connected != nil {
+		connected.conn.Close(websocket.StatusPolicyViolation, "client token rotated")
+	}
+	return token, nil
+}
+
 // register 将新连接设为指定 Client 的唯一活动连接。
 // 如果旧连接正在执行任务，相关目标先回退到 queued，以便新连接重新领取当前工作单元；
 // 之后在锁外持久化状态并关闭旧连接，避免 WebSocket I/O 持有 Hub 全局锁。

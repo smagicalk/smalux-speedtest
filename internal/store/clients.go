@@ -39,6 +39,28 @@ func (s *Store) CreateClientForAdmin(ctx context.Context, name string, labels ma
 	return client, token, err
 }
 
+// RotateClientToken replaces an enabled Client's credential while preserving its
+// stable identity and historical task associations. As with creation, only the
+// one-time plaintext token is returned; persistence retains only its hash.
+func (s *Store) RotateClientToken(ctx context.Context, id string) (string, error) {
+	secret, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash=? WHERE id=? AND enabled=1`, tokenHash(secret), id)
+	if err != nil {
+		return "", err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if changed == 0 {
+		return "", sql.ErrNoRows
+	}
+	return secret, nil
+}
+
 // AuthenticateClient 按令牌哈希查找 Client，并同时检查是否已撤销。
 // 返回的 Client 不包含 token_hash；空令牌和未知令牌都不会触发全表扫描。
 func (s *Store) AuthenticateClient(ctx context.Context, token string) (Client, error) {

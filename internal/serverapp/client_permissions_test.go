@@ -39,6 +39,12 @@ func TestClientOwnershipLimitsOperatorMutations(t *testing.T) {
 		t.Fatalf("operator create status = %d", createdAdmin.StatusCode)
 	}
 	operatorClient, operatorCSRF := loginAdminForTest(t, server.URL, "operator", "operator-password")
+	forbiddenRotation := doAdminJSON(t, operatorClient, operatorCSRF, http.MethodPost, server.URL+"/api/clients/"+ownerPayload.Client.ID+"/token", nil)
+	if forbiddenRotation.StatusCode != http.StatusForbidden {
+		forbiddenRotation.Body.Close()
+		t.Fatalf("operator owner token rotation status = %d", forbiddenRotation.StatusCode)
+	}
+	forbiddenRotation.Body.Close()
 	clientsResponse, err := operatorClient.Get(server.URL + "/api/clients")
 	if err != nil || clientsResponse.StatusCode != http.StatusOK {
 		t.Fatalf("operator client list = %v, %v", clientsResponse, err)

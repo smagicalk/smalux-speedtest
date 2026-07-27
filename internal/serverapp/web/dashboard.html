@@ -123,7 +123,8 @@
   </dialog>
 
   <dialog id="token-dialog">
-    <div class="dialog-heading"><h2>Client 接入信息</h2><button class="icon-button close-token" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <div class="dialog-heading"><h2 id="token-dialog-title">Client 接入信息</h2><button class="icon-button close-token" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <p id="token-dialog-note" class="token-dialog-note">Token 仅本次显示，请立即保存。</p>
     <label class="field"><span>Token</span><textarea id="client-token" rows="3" readonly></textarea></label>
     <label class="field command-field"><span>Windows 运行命令</span><textarea id="client-command" rows="4" readonly></textarea></label>
     <div class="form-actions"><button id="copy-token" class="quiet" type="button">复制 Token</button><button id="copy-client-command" class="primary" type="button">复制运行命令</button></div>
