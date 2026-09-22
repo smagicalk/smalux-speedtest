@@ -36,6 +36,15 @@ Open `http://127.0.0.1:8080`, log in, create a client, and retain the token show
 Ordinary administrators can see every Client as read-only operational status, but can edit, revoke, and use only the Clients they created; the highest-privilege administrator can manage all Clients. Task lists, details, live events, exports, and cancellation follow the same ownership boundary: ordinary administrators can operate only their own tasks, while the Owner can operate all tasks. Client display names and labels can be edited from the dashboard without rotating their tokens. Every administrator can open **Account security** from their username in the top bar and change their own password after confirming the current password. A successful password change immediately invalidates that account's other browser sessions.
 
 Task candidate count, Top N, and thread count use bounded dashboard selectors. Each task can use 1-32 concurrent speedtest connections (4 by default). The detail page shows each target Client's execution state and a count-only summary when invalid proxy lines were skipped; proxy text and import details are not persisted. Completed results can be exported as CSV or as a branded PNG report from the task detail page.
+#### docker运行
+
+|环境变量|默认值|作用模式说明|
+| --- | --- | --- |
+|MODE |server |通用运行模式：server（服务端）或 client（客户端）|
+|SMALUX_ADMIN_PASSWORD |无（必填）|server服务端管理后台密码（未配置会自动拦截并提示）|
+|SMALUX_SERVER_ADDR|无（必填）|client测速服务端通信地址（如 [http://1.2.3.4:8080](http://1.2.3.4:8080)）|
+|SMALUX_CLIENT_TOKEN	|空（选填）	|通用	测速鉴权 Token（服务端配置后，客户端也必须配置）|
+|TZ |Asia/Shanghai |通用容器时区|
 
 ## Telegram Bot (optional)
 
