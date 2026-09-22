@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/wire"
 )
@@ -86,9 +87,8 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// coder/websocket/net/http 错误可能回显带 query 的 ServerURL。日志只保留错误
-		// 类型和退避时间，不记录 URL、Bearer Token 或远端响应原文。
-		c.config.Logger.Warn("connection closed", "error_type", fmt.Sprintf("%T", err), "retry_in", delay)
+		// coder/websocket/net/http 错误由 logsafe 脱敏处理，过滤 Token 与敏感参数并保留错误原因。
+		c.config.Logger.Warn("connection closed", "error_type", logsafe.ErrorType(err), "retry_in", delay)
 		jitter := time.Duration(rand.IntN(500)) * time.Millisecond
 		timer := time.NewTimer(delay + jitter)
 		select {

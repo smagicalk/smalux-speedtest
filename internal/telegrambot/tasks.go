@@ -70,9 +70,9 @@ func (b *Bot) submitAndReply(ctx context.Context, chatID, userID, replyToMessage
 
 	task, err := b.runner.Submit(ctx, request)
 	if err != nil || strings.TrimSpace(task.ID) == "" {
-		// Runner 错误可能包含订阅 URL 或代理原文，日志只记录具体类型。
+		// Runner 错误由 logsafe 脱敏处理，不输出订阅 URL 与代理原文，保留关键错误原因。
 		// 可向用户展示的内容必须通过 UserError 显式标记。
-		b.config.Logger.Warn("telegram task submission failed", "user_id", userID, "chat_id", chatID, "error_type", fmt.Sprintf("%T", err))
+		b.config.Logger.Warn("telegram task submission failed", "user_id", userID, "chat_id", chatID, "error_type", logsafe.ErrorType(err))
 		userMessage := UserMessage(err)
 		if userMessage == "" {
 			userMessage = "任务创建失败，请稍后重试或在管理页面查看日志。"

@@ -146,7 +146,7 @@ func (b *Bot) cancelAndReply(ctx context.Context, chatID, userID int64, taskID s
 	defer b.wg.Done()
 	if err := canceler.Cancel(ctx, taskID); err != nil {
 		b.clearCancellation(userID, taskID)
-		b.config.Logger.Warn("telegram task cancellation failed", "task_id", taskID, "user_id", userID, "error_type", fmt.Sprintf("%T", err))
+		b.config.Logger.Warn("telegram task cancellation failed", "task_id", taskID, "user_id", userID, "error_type", logsafe.ErrorType(err))
 		b.sendText(ctx, chatID, fmt.Sprintf("任务 %s 取消失败。", taskID))
 		return
 	}

@@ -3,10 +3,10 @@ package serverapp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
+	"smalux-speedtest/internal/logsafe"
 	"smalux-speedtest/internal/model"
 	"smalux-speedtest/internal/reportpng"
 	"smalux-speedtest/internal/store"
@@ -112,7 +112,7 @@ func (r telegramTaskRunner) wait(ctx context.Context, taskID string, onProgress 
 			}
 			// SQLite 或短暂连接故障不代表测速任务失败。继续复核，避免 Bot 提前
 			// 清除 active 状态并给用户一个永远不会到达的失败图片。
-			r.app.config.Logger.Warn("telegram task status read failed; retrying", "task_id", taskID, "error_type", fmt.Sprintf("%T", err))
+			r.app.config.Logger.Warn("telegram task status read failed; retrying", "task_id", taskID, "error_type", logsafe.ErrorType(err))
 			if !waitTelegramRetry(ctx, 2*time.Second) {
 				return telegrambot.Completion{}, ctx.Err()
 			}
