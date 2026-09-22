@@ -13,5 +13,5 @@ func ErrorType(err error) string {
 	if err == nil {
 		return "<nil>"
 	}
-	return fmt.Sprintf("%T", err)
+	return fmt.Sprintf("%T: %s", err, err.Error())
 }
