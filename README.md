@@ -165,8 +165,9 @@ Bot Token 采用本地随机生成的强密钥加密保存在 SQLite 中（密�
 
 ## 构建发布流水线
 
-* **多平台二进制发布**：`.github/workflows/release.yml` 在推送 `v*` Tag 时自动运行单元测试，为 Linux、Windows、macOS（amd64 / arm64）编译发布六个平台的完整二进制包与 `SHA256SUMS` 校验清单。
-* **Docker 镜像自动打包**：`.github/workflows/docker-publish.yml` 在 Release 发布或手动触发时自动打包 Alpine 轻量多模式镜像，并推送至 GitHub Container Registry（`ghcr.io/smagicalk/smalux-speedtest`）。
+* **多平台二进制发布**：`.github/workflows/release.yml` 仅在推送 `v*` Tag 或发布 GitHub Release 时触发，自动化运行单元测试，为 Linux、Windows、macOS（amd64 / arm64）编译发布六个平台的完整二进制包与 `SHA256SUMS` 校验清单。
+* **Docker 镜像自动打包**：`.github/workflows/docker-publish.yml` 在 `release.yml` 成功发布后自动触发（或手动触发），自动拉取对应 Release 二进制打包 Alpine 轻量多模式镜像，并推送至 GitHub Container Registry（`ghcr.io/smagicalk/smalux-speedtest`）。
+* **随时测试与跨平台编译**：`.github/workflows/test.yml` 支持手动触发（`workflow_dispatch`），可自由指定分支、系统与架构，随时运行测试并产出可下载的编译产物，不污染 Release。
 
 ## 代码架构布局
 

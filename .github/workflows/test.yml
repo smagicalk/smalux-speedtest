@@ -1,21 +1,49 @@
-name: Build And Release
+name: Test And Build
 
 on:
-  push:
-    tags:
-      - 'v*'
-  release:
-    types:
-      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要构建测试的分支、Tag 或 Commit'
+        required: true
+        default: 'vibe-dev'
+        type: string
+      os:
+        description: '目标操作系统 (all 表示编译 linux, windows, darwin)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'linux'
+          - 'windows'
+          - 'darwin'
+      arch:
+        description: '目标架构 (all 表示编译 amd64, arm64)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'amd64'
+          - 'arm64'
+      run_tests:
+        description: '构建前是否执行单元测试'
+        required: true
+        default: true
+        type: boolean
+      version:
+        description: '测试包版本名称 (如 dev, test, pr-12)'
+        required: false
+        default: 'dev'
+        type: string
 
-# Build jobs only need to read the repository. The publish job below requests write
-# access separately and only runs when a real Release target was provided.
 permissions:
   contents: read
 
 concurrency:
-  group: smalux-release-${{ github.event.release.tag_name || github.ref || github.run_id }}
-  cancel-in-progress: false
+  group: smalux-test-${{ inputs.ref || github.ref }}-${{ github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -25,8 +53,7 @@ jobs:
     permissions:
       contents: read
     env:
-      SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+      SOURCE_REF: ${{ inputs.ref || github.ref }}
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
@@ -36,20 +63,13 @@ jobs:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
 
-      - name: Verify release tag and record commit
+      - name: Record commit
         id: source
         shell: bash
         run: |
           set -euo pipefail
           commit="$(git rev-parse HEAD)"
-          if [[ -n "$RELEASE_TAG" ]]; then
-            git check-ref-format "refs/tags/$RELEASE_TAG"
-            tag_commit="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
-            if [[ -z "$tag_commit" || "$commit" != "$tag_commit" ]]; then
-              printf 'checked out commit does not match release tag %s\n' "$RELEASE_TAG" >&2
-              exit 1
-            fi
-          fi
+          printf 'Checked out commit: %s\n' "$commit"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
@@ -59,6 +79,7 @@ jobs:
           cache: true
 
       - name: Run tests
+        if: ${{ inputs.run_tests }}
         run: go test -buildvcs=false -tags with_utls ./...
 
   select-build-matrix:
@@ -68,14 +89,39 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - name: Select all release targets
+      - name: Select targets based on inputs
         id: matrix
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' \
-            'matrix={"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"},{"goos":"windows","goarch":"amd64"},{"goos":"windows","goarch":"arm64"},{"goos":"darwin","goarch":"amd64"},{"goos":"darwin","goarch":"arm64"}]}' \
-            >> "$GITHUB_OUTPUT"
+
+          ALL_OS=("linux" "windows" "darwin")
+          ALL_ARCH=("amd64" "arm64")
+
+          TARGET_OS="${{ inputs.os }}"
+          TARGET_ARCH="${{ inputs.arch }}"
+
+          if [[ "$TARGET_OS" == "all" ]]; then
+            SELECTED_OS=("${ALL_OS[@]}")
+          else
+            SELECTED_OS=("$TARGET_OS")
+          fi
+
+          if [[ "$TARGET_ARCH" == "all" ]]; then
+            SELECTED_ARCH=("${ALL_ARCH[@]}")
+          else
+            SELECTED_ARCH=("$TARGET_ARCH")
+          fi
+
+          items=()
+          for o in "${SELECTED_OS[@]}"; do
+            for a in "${SELECTED_ARCH[@]}"; do
+              items+=("{\"goos\":\"$o\",\"goarch\":\"$a\"}")
+            done
+          done
+
+          matrix_json=$(IFS=,; echo "${items[*]}")
+          printf 'matrix={"include":[%s]}\n' "$matrix_json" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -88,11 +134,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select-build-matrix.outputs.matrix) }}
     env:
-      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+      VERSION: ${{ inputs.version || 'dev' }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
-      - name: Check out release source
+      - name: Check out test source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.test.outputs.commit }}
@@ -146,10 +192,10 @@ jobs:
           name: ${{ steps.package.outputs.archive_base }}
           path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
   collect:
-    name: Collect checksums
+    name: Collect test artifacts and checksums
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -160,61 +206,25 @@ jobs:
       - name: Download platform packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: release
+          path: artifacts
           merge-multiple: true
 
       - name: Generate SHA256SUMS
         shell: bash
         run: |
           set -euo pipefail
-          cd release
+          cd artifacts
           mapfile -t packages < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort)
-          if (( ${#packages[@]} != 6 )); then
-            printf 'expected 6 platform packages, found %d\n' "${#packages[@]}" >&2
+          if (( ${#packages[@]} == 0 )); then
+            printf 'no platform packages found\n' >&2
             exit 1
           fi
           sha256sum "${packages[@]}" > SHA256SUMS
 
-      - name: Upload combined Actions artifact
+      - name: Upload combined test bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: smalux-speedtest-release-bundle
-          path: release/*
+          name: smalux-speedtest-test-bundle
+          path: artifacts/*
           if-no-files-found: error
-          retention-days: 14
-
-  publish:
-    name: Publish Release assets
-    needs: [test, collect]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      actions: read
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
-      TESTED_COMMIT: ${{ needs.test.outputs.commit }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Download combined release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: smalux-speedtest-release-bundle
-          path: release
-
-      - name: Upload assets to the existing Release
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Smalux Speedtest $RELEASE_TAG" --generate-notes
-          fi
-          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
-          if [[ "$tag_commit" != "$TESTED_COMMIT" ]]; then
-            printf 'release tag moved after testing; expected %s, found %s\n' \
-              "$TESTED_COMMIT" "$tag_commit" >&2
-            exit 1
-          fi
-          gh release upload "$RELEASE_TAG" release/* \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          retention-days: 7

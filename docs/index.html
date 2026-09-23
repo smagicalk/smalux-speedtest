@@ -599,22 +599,21 @@ git diff --check</code></pre>
 
       <section id="release">
         <h2>构建与发布</h2>
-        <p><code>.github/workflows/release.yml</code> 支持三种入口：</p>
+        <p>GitHub Actions 自动化流水线分为三个职责清晰的 Workflow：</p>
         <ul>
-          <li>推送 <code>main</code>：运行测试并上传六个平台包作为 Actions Artifact。</li>
-          <li>推送 <code>v*</code> Tag：运行测试、编译六个平台、生成 SHA256SUMS 并上传 GitHub Release。</li>
-          <li>手动触发：通过下拉框选择 <code>vibe-dev</code> 或 <code>main</code>、系统、架构以及 <code>dev</code>、<code>test</code> 或 <code>release</code> 版本，只编译所选的一个目标并保留为测试 Artifact。</li>
+          <li><strong>发布流水线</strong>（<code>.github/workflows/release.yml</code>）：仅在推送 <code>v*</code> Tag 或在 GitHub 发布 Release 时触发，自动化运行测试、编译全平台包、生成 SHA256SUMS 并发布到 GitHub Releases。</li>
+          <li><strong>Docker 构建流水线</strong>（<code>.github/workflows/docker-publish.yml</code>）：在 Release 成功发布后自动触发（或手动触发），自动拉取对应版本的 Linux 二进制包，构建轻量多模式 Docker 镜像并推送至 GitHub Container Registry（<code>ghcr.io/smagicalk/smalux-speedtest</code>）。</li>
+          <li><strong>测试编译流水线</strong>（<code>.github/workflows/test.yml</code>）：需手动触发（<code>workflow_dispatch</code>），支持自由选择分支、系统与架构，随时运行测试并产出可下载的编译产物，不污染 Release。</li>
         </ul>
-        <p>此外，<code>.github/workflows/docker-publish.yml</code> 在推送 <code>v*</code> Tag 或手动触发时运行，自动拉取对应 Release 二进制并构建发布多模式 Docker 镜像至 GitHub Container Registry（<code>ghcr.io/smagicalk/smalux-speedtest</code>）。</p>
-        <pre><button class="copy" type="button">复制</button><code># 手动验证当前分支的交叉编译
-gh workflow run "Build And Release" \
+        <pre><button class="copy" type="button">复制</button><code># 手动编译与测试指定分支（产物保留在 Actions Artifacts）
+gh workflow run "Test And Build" \
   --ref vibe-dev \
   -f ref=vibe-dev \
-  -f os=windows \
-  -f arch=amd64 \
+  -f os=all \
+  -f arch=all \
   -f version=dev
 
-# 正式发布（触发发布与 Docker 镜像打包流水线）
+# 正式发布（打 Tag 推送，将自动触发全平台 Release 与随后的 Docker 镜像打包流水线）
 git tag v1.0.0
 git push origin v1.0.0</code></pre>
         <footer>文档随源码维护。当前 WebSocket 应用层协议：v2。</footer>

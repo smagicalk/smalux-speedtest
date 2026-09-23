@@ -172,11 +172,13 @@ VMess、VLESS、Trojan 的 V2Ray transport 支持默认 TCP（省略、`tcp`、`
 ## 最近完成的改动
 
 - 当前工作区（未提交）
+  - Workflow 触发条件分离与新增手动测试流：
+    - `release.yml`：严格限制仅在推送 `v*` Tag 或发布 GitHub Release 时触发，自动化编译六平台二进制、计算校验和并发布 GitHub Releases。
+    - `docker-publish.yml`：移除 tag push 触发，改为在 `Build And Release` 成功完成（`workflow_run.conclusion == 'success'`）后或手动 `workflow_dispatch` 时触发，确保 release 资产发布后再打包镜像。
+    - `test.yml`：新建专属手动测试与编译工作流（`workflow_dispatch`），支持自选分支、目标系统/架构（支持 `all` 组合构建）、自选版本号并产出 Actions Artifacts 供随时下载测试，不污染 Release。
   - `logsafe` 安全脱敏改造：保留底层网络（connection refused、i/o timeout、address already in use）、HTTP 状态码及关键诊断信息，精准脱敏代理链接（`[PROXY_URI_REDACTED]`）、Telegram Bot Token、Bearer Token、查询参数密钥及用户本地路径。
   - Docker 容器与启动脚本完善：编写轻量 `Dockerfile` 与 `entrypoint.sh`，支持通过 `MODE=server/client` 自动切换运行模式，标准化修正 Client `-server` 参数及 `ws(s):///ws/client` 路径补全，修复 Server 监听 `0.0.0.0:8080` 与重启免密逻辑。
-  - GitHub Actions 优化：`docker-publish.yml` 引入检出步骤并直接使用仓库内 `Dockerfile` 与 `entrypoint.sh`。
-  - 同步更新 `README.md` 与 `docs/index.html` 的 Docker 快速开始说明与参数矩阵。
-  - 管理后台紧凑响应式布局与任务隔离（Owner 全局管理/普通管理员自辖）。
+  - 同步更新 `README.md`、`README_EN.md` 与 `docs/index.html` 的 Workflow 流水线文档、快速开始说明与参数矩阵。
 
 - `5357055 feat: improve proxy share link compatibility`
   - 扩展 VLESS/VMess/Trojan transport 字段。

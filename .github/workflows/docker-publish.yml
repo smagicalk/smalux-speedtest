@@ -1,6 +1,10 @@
 name: Package Release to GHCR
 
 on:
+  workflow_run:
+    workflows: ["Build And Release"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       tag:
@@ -8,9 +12,6 @@ on:
         required: false
         type: string
         default: 'latest'
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
@@ -18,41 +19,50 @@ permissions:
 
 jobs:
   build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
 
     steps:
       - name: 检出仓库代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: 确定目标版本 Tag (自动解析最新版)
         id: vars
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           INPUT_TAG="${{ inputs.tag }}"
 
-          if [ "${{ github.event_name }}" = "push" ]; then
-            INPUT_TAG="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            UPSTREAM_REF="${{ github.event.workflow_run.head_branch }}"
+            if [[ -n "$UPSTREAM_REF" && "$UPSTREAM_REF" != "null" && "$UPSTREAM_REF" == v* ]]; then
+              INPUT_TAG="$UPSTREAM_REF"
+            fi
           fi
 
           if [ -z "${INPUT_TAG}" ] || [ "${INPUT_TAG}" = "latest" ]; then
-            echo "正在向上游 smagicalk/smalux-speedtest 查询最新 Release..."
-            TARGET_TAG=$(gh release view --repo smagicalk/smalux-speedtest --json tagName -q .tagName)
+            echo "正在向上游查询最新 Release..."
+            TARGET_TAG=$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName -q .tagName)
             echo "成功获取最新版本: ${TARGET_TAG}"
           else
             TARGET_TAG="${INPUT_TAG}"
           fi
 
-          echo "tag=${TARGET_TAG}" >> $GITHUB_OUTPUT
+          echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: 下载并解压 Release 二进制包
         run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
           FILENAME="smalux-speedtest-${TAG}-linux-amd64.tar.gz"
-          DOWNLOAD_URL="https://github.com/smagicalk/smalux-speedtest/releases/download/${TAG}/${FILENAME}"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILENAME}"
 
           echo "正在下载: ${DOWNLOAD_URL}"
-          curl -fL -o "${FILENAME}" "${DOWNLOAD_URL}"
+          curl --retry 3 --retry-delay 5 -fL -o "${FILENAME}" "${DOWNLOAD_URL}"
 
           tar -zxvf "${FILENAME}"
           chmod +x smalux-server smalux-client entrypoint.sh
