@@ -139,6 +139,39 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
   -server wss://speed.example.com/ws/client</code></pre>
         <p>Client Token 只在创建或重新授权后的弹窗中显示一次。Server 只保存不可逆摘要，因此不能“查看旧 Token”。迁移机器或凭据遗失时，在 Client 列表中选择<strong>重新授权</strong>，把新 Token 写入目标机器的 <code>SMALUX_CLIENT_TOKEN</code> 后重启 Client。旧 Token 会立即失效，当前连接会被断开，但 Client ID、名称、标签和历史结果保持不变。</p>
         <div class="callout"><strong>临时明文连接：</strong>只有在可信内网测试时才启用 Server 的 <code>-allow-insecure-ws</code>。公网部署必须使用 HTTPS/WSS，否则 Token 和测速任务会被网络路径看到。</div>
+        <h3>Docker 容器运行</h3>
+        <p>项目提供发布至 GHCR 的通用轻量容器镜像 <code>ghcr.io/smagicalk/smalux-speedtest</code>，基于 Alpine Linux 打包，通过 <code>MODE</code> 环境变量区分服务端与执行端：</p>
+        <pre><button class="copy" type="button">复制</button><code># 启动 Server 容器（服务端）
+docker run -d --name smalux-server --restart unless-stopped \
+  -p 8080:8080 \
+  -v ./data:/data \
+  -e MODE=server \
+  -e SMALUX_ADMIN_PASSWORD='change-this-password' \
+  ghcr.io/smagicalk/smalux-speedtest:latest
+
+# 启动 Client 容器（客户端）
+docker run -d --name smalux-client --restart unless-stopped \
+  -e MODE=client \
+  -e SMALUX_SERVER_URL='wss://speed.example.com/ws/client' \
+  -e SMALUX_CLIENT_TOKEN='CLIENT_TOKEN' \
+  ghcr.io/smagicalk/smalux-speedtest:latest</code></pre>
+        <ul>
+          <li><strong>Server 说明</strong>：首次启动必须通过 <code>SMALUX_ADMIN_PASSWORD</code> 指定密码初始化管理员（账户名默认为 <code>admin</code>）。数据持久化在 <code>/data/smalux-speedtest.db</code>；数据库建立后后续重启无需再次指定密码。若在纯内网测试需支持远程明文 <code>ws://</code>，可追加 <code>-e SMALUX_ALLOW_INSECURE_WS=true</code>。</li>
+          <li><strong>Client 说明</strong>：<code>SMALUX_CLIENT_TOKEN</code> 必须填写在 Server 后台创建该 Client 时生成的 Token。<code>SMALUX_SERVER_URL</code> 支持 WebSocket 地址；若输入形如 <code>http://1.2.3.4:8080</code>，容器启动脚本会自动转换为 <code>ws://1.2.3.4:8080/ws/client</code>。</li>
+        </ul>
+        <table>
+          <thead><tr><th>环境变量</th><th>默认值</th><th>模式</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>MODE</code></td><td><code>server</code></td><td>通用</td><td>运行模式：<code>server</code>（服务端）或 <code>client</code>（客户端）。</td></tr>
+            <tr><td><code>SMALUX_ADMIN_PASSWORD</code></td><td>无</td><td>Server</td><td>初始管理员密码（仅首次建库启动时必填）。</td></tr>
+            <tr><td><code>SMALUX_LISTEN</code></td><td><code>0.0.0.0:8080</code></td><td>Server</td><td>服务端监听地址（容器内部广播）。</td></tr>
+            <tr><td><code>SMALUX_DATABASE</code></td><td><code>/data/smalux-speedtest.db</code></td><td>Server</td><td>SQLite 数据库文件存储路径。</td></tr>
+            <tr><td><code>SMALUX_ALLOW_INSECURE_WS</code></td><td><code>false</code></td><td>Server</td><td>是否允许远程明文 <code>ws://</code> 客户端连接（生产公网建议保持 false）。</td></tr>
+            <tr><td><code>SMALUX_SERVER_URL</code></td><td>无</td><td>Client</td><td>服务端 WebSocket 通信地址（必填，兼容 <code>SMALUX_SERVER_ADDR</code>）。</td></tr>
+            <tr><td><code>SMALUX_CLIENT_TOKEN</code></td><td>无</td><td>Client</td><td>客户端连接鉴权 Token（必填，由 Server 后台生成）。</td></tr>
+            <tr><td><code>TZ</code></td><td><code>Asia/Shanghai</code></td><td>通用</td><td>容器时区设置。</td></tr>
+          </tbody>
+        </table>
         <h3>一键安装服务</h3>
         <p>Linux 主机可以使用仓库中的 <code>scripts/smalux.sh</code>。脚本从最新 GitHub Release 下载对应架构包并校验 SHA256，然后交互式创建 systemd 服务。</p>
         <pre><button class="copy" type="button">复制</button><code>curl -fsSL https://raw.githubusercontent.com/smagicalk/smalux-speedtest/main/scripts/smalux.sh -o smalux.sh
@@ -202,6 +235,8 @@ sudo ./smalux.sh uninstall</code></pre>
             <tr><td><code>internal/subscription/*</code></td><td>带 DNS/重定向复验的 SSRF 防护、15 秒超时和 5 MiB 响应限制。</td></tr>
             <tr><td><code>internal/telegrambot/*</code></td><td>Bot API、命令/向导、授权、进度消息和有界重试队列；不直接实现调度。</td></tr>
             <tr><td><code>internal/reportpng/*</code></td><td>Server 侧有界 PNG 报告；浏览器侧报告位于 <code>web/report.js</code>。</td></tr>
+            <tr><td><code>internal/logsafe/*</code></td><td>日志结构化错误脱敏：过滤代理链接、Token、敏感查询参数与路径，同时保留网络与状态码等根因诊断信息。</td></tr>
+            <tr><td><code>Dockerfile</code>、<code>entrypoint.sh</code></td><td>通用轻量容器镜像定义与多模式启动装配脚本；支持参数自动补全与协议标准化。</td></tr>
           </tbody>
         </table>
 
@@ -570,6 +605,7 @@ git diff --check</code></pre>
           <li>推送 <code>v*</code> Tag：运行测试、编译六个平台、生成 SHA256SUMS 并上传 GitHub Release。</li>
           <li>手动触发：通过下拉框选择 <code>vibe-dev</code> 或 <code>main</code>、系统、架构以及 <code>dev</code>、<code>test</code> 或 <code>release</code> 版本，只编译所选的一个目标并保留为测试 Artifact。</li>
         </ul>
+        <p>此外，<code>.github/workflows/docker-publish.yml</code> 在推送 <code>v*</code> Tag 或手动触发时运行，自动拉取对应 Release 二进制并构建发布多模式 Docker 镜像至 GitHub Container Registry（<code>ghcr.io/smagicalk/smalux-speedtest</code>）。</p>
         <pre><button class="copy" type="button">复制</button><code># 手动验证当前分支的交叉编译
 gh workflow run "Build And Release" \
   --ref vibe-dev \
@@ -578,7 +614,7 @@ gh workflow run "Build And Release" \
   -f arch=amd64 \
   -f version=dev
 
-# 正式发布
+# 正式发布（触发发布与 Docker 镜像打包流水线）
 git tag v1.0.0
 git push origin v1.0.0</code></pre>
         <footer>文档随源码维护。当前 WebSocket 应用层协议：v2。</footer>

@@ -172,10 +172,11 @@ VMess、VLESS、Trojan 的 V2Ray transport 支持默认 TCP（省略、`tcp`、`
 ## 最近完成的改动
 
 - 当前工作区（未提交）
-  - 管理后台改为紧凑响应式布局，并完成桌面/390px 浏览器验证。
-  - 任务按创建管理员隔离；Owner 可管理全部任务，旧任务只对 Owner 可见。
-  - 任务详情展示安全的导入跳过计数与每个目标 Client 状态；target SSE 实时同步运行、终态和断线重排。
-  - 失败、部分完成和取消任务按实际结果显示进度，REST 请求具有超时且后台标签暂停轮询。
+  - `logsafe` 安全脱敏改造：保留底层网络（connection refused、i/o timeout、address already in use）、HTTP 状态码及关键诊断信息，精准脱敏代理链接（`[PROXY_URI_REDACTED]`）、Telegram Bot Token、Bearer Token、查询参数密钥及用户本地路径。
+  - Docker 容器与启动脚本完善：编写轻量 `Dockerfile` 与 `entrypoint.sh`，支持通过 `MODE=server/client` 自动切换运行模式，标准化修正 Client `-server` 参数及 `ws(s):///ws/client` 路径补全，修复 Server 监听 `0.0.0.0:8080` 与重启免密逻辑。
+  - GitHub Actions 优化：`docker-publish.yml` 引入检出步骤并直接使用仓库内 `Dockerfile` 与 `entrypoint.sh`。
+  - 同步更新 `README.md` 与 `docs/index.html` 的 Docker 快速开始说明与参数矩阵。
+  - 管理后台紧凑响应式布局与任务隔离（Owner 全局管理/普通管理员自辖）。
 
 - `5357055 feat: improve proxy share link compatibility`
   - 扩展 VLESS/VMess/Trojan transport 字段。

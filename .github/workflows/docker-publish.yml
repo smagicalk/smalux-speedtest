@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
       - name: 确定目标版本 Tag (自动解析最新版)
         id: vars
         env:
@@ -52,82 +55,7 @@ jobs:
           curl -fL -o "${FILENAME}" "${DOWNLOAD_URL}"
 
           tar -zxvf "${FILENAME}"
-          chmod +x smalux-server smalux-client
-
-      - name: 动态生成纯环境变量驱动的 entrypoint 与 Alpine Dockerfile
-        run: |
-          # 1. 编写通过环境变量自动化装配的 entrypoint.sh
-          cat << 'EOF' > entrypoint.sh
-          #!/bin/sh
-          set -e
-
-          # -------------------- 客户端模式 --------------------
-          if [ "$MODE" = "client" ]; then
-              # 自动兼容常见的变量命名: SMALUX_SERVER_ADDR / SMALUX_SERVER / SMALUX_SERVER_URL
-              TARGET_SERVER="${SMALUX_SERVER_ADDR:-${SMALUX_SERVER:-$SMALUX_SERVER_URL}}"
-
-              if [ -z "$TARGET_SERVER" ]; then
-                  echo "======================================================================"
-                  echo "[Smalux Client 错误] 必须设置服务端地址环境变量 SMALUX_SERVER_ADDR！"
-                  echo "运行示例："
-                  echo "  docker run --rm \\"
-                  echo "    -e MODE=client \\"
-                  echo "    -e SMALUX_SERVER_ADDR=http://<服务端IP>:8080 \\"
-                  echo "    -e SMALUX_CLIENT_TOKEN=your_token \\"
-                  echo "    <image>"
-                  echo "======================================================================"
-                  exit 1
-              fi
-
-              CLIENT_ARGS="-s $TARGET_SERVER"
-              if [ -n "$SMALUX_CLIENT_TOKEN" ]; then
-                  CLIENT_ARGS="$CLIENT_ARGS -t $SMALUX_CLIENT_TOKEN"
-              fi
-
-              echo "[Smalux Client] 开始测速，目标服务端: $TARGET_SERVER ..."
-              exec smalux-client $CLIENT_ARGS "$@"
-          fi
-
-          # -------------------- 服务端模式 (默认) --------------------
-          if [ -z "$SMALUX_ADMIN_PASSWORD" ]; then
-              echo "======================================================================"
-              echo "[Smalux Server 错误] 必须设置管理员密码环境变量 SMALUX_ADMIN_PASSWORD！"
-              echo "运行示例："
-              echo "  docker run -d -p 8080:8080 \\"
-              echo "    -v ./data:/data \\"
-              echo "    -e SMALUX_ADMIN_PASSWORD=your_secure_password \\"
-              echo "    -e SMALUX_CLIENT_TOKEN=your_token \\"
-              echo "    <image>"
-              echo "======================================================================"
-              exit 1
-          fi
-
-          echo "[Smalux Server] 正在启动测速服务端..."
-          exec smalux-server "$@"
-          EOF
-          chmod +x entrypoint.sh
-
-          # 2. 编写轻量 Alpine Dockerfile
-          cat << 'EOF' > Dockerfile
-          FROM alpine:latest
-
-          RUN apk add --no-cache ca-certificates tzdata gcompat
-
-          COPY smalux-server /usr/local/bin/smalux-server
-          COPY smalux-client /usr/local/bin/smalux-client
-          COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-
-          WORKDIR /data
-          VOLUME ["/data"]
-
-          # 预设默认环境变量
-          ENV MODE=server
-          ENV TZ=Asia/Shanghai
-
-          EXPOSE 8080
-
-          ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-          EOF
+          chmod +x smalux-server smalux-client entrypoint.sh
 
       - name: 登录 GitHub Container Registry (ghcr.io)
         uses: docker/login-action@v3
