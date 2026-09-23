@@ -216,5 +216,39 @@ jobs:
               "$TESTED_COMMIT" "$tag_commit" >&2
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" release/* \
-            --repo "$GITHUB_REPOSITORY" --clobber
+
+          echo "检查并清理已存在的同名 Release 资产以支持覆盖更新..."
+          existing_assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)
+
+          for file in release/*; do
+            [ -f "$file" ] || continue
+            filename="$(basename "$file")"
+            if echo "$existing_assets" | grep -Fxq "$filename"; then
+              echo "检测到已存在资产 $filename，执行删除以支持覆盖..."
+              gh release delete-asset "$RELEASE_TAG" "$filename" --repo "$GITHUB_REPOSITORY" --yes || true
+            fi
+          done
+
+          echo "开始上传 Release 资产（单文件安全上传并覆盖）..."
+          for file in release/*; do
+            [ -f "$file" ] || continue
+            filename="$(basename "$file")"
+            echo "正在上传: $filename"
+            uploaded=false
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY" --clobber; then
+                uploaded=true
+                break
+              fi
+              echo "上传 $filename 第 $attempt 次尝试失败，清理可能残留的同名资产后重试..."
+              sleep 2
+              gh release delete-asset "$RELEASE_TAG" "$filename" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+              sleep 1
+            done
+
+            if [[ "$uploaded" != "true" ]]; then
+              echo "资产 $filename 上传失败" >&2
+              exit 1
+            fi
+          done
+          echo "所有 Release 资产上传成功！"

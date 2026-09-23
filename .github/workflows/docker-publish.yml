@@ -55,14 +55,19 @@ jobs:
           echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: 下载并解压 Release 二进制包
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
           FILENAME="smalux-speedtest-${TAG}-linux-amd64.tar.gz"
-          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILENAME}"
 
-          echo "正在下载: ${DOWNLOAD_URL}"
-          curl --retry 3 --retry-delay 5 -fL -o "${FILENAME}" "${DOWNLOAD_URL}"
+          echo "正在下载 Release 二进制包: ${FILENAME} (Tag: ${TAG})"
+          if ! gh release download "${TAG}" --pattern "${FILENAME}" --repo "${GITHUB_REPOSITORY}" --clobber; then
+            DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILENAME}"
+            echo "gh release download 失败，回退使用 curl 从 ${DOWNLOAD_URL} 下载..."
+            curl --retry 3 --retry-delay 5 -fL -o "${FILENAME}" "${DOWNLOAD_URL}"
+          fi
 
           tar -zxvf "${FILENAME}"
           chmod +x smalux-server smalux-client entrypoint.sh
