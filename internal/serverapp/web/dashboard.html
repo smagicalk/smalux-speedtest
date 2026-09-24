@@ -104,8 +104,8 @@
   <dialog id="client-dialog">
     <form id="client-form" method="dialog">
       <div class="dialog-heading"><h2>添加 Client</h2><button class="icon-button close-dialog" type="button" title="关闭" aria-label="关闭">×</button></div>
-      <label class="field"><span>名称</span><input name="name" required maxlength="80"></label>
-      <label class="field"><span>标签</span><input name="labels" placeholder="region=hk, provider=example"></label>
+      <label class="field"><span>名称 <span class="required" title="必填">*</span></span><input name="name" required maxlength="80"></label>
+      <label class="field"><span>标签 <small class="field-hint-inline">（选填，留空表示不设置任何标签）</small></span><input name="labels" placeholder="支持单标签或键值对，例如: 香港 或 region=hk, isp=ct"></label>
       <div id="client-error" class="alert error hidden" role="alert"></div>
       <div class="form-actions"><button class="quiet close-dialog" type="button">取消</button><button class="primary" type="submit">创建</button></div>
     </form>
@@ -115,8 +115,8 @@
     <form id="edit-client-form">
       <div class="dialog-heading"><h2>编辑测速节点</h2><button class="icon-button close-edit-client" type="button" title="关闭" aria-label="关闭">×</button></div>
       <input type="hidden" name="id">
-      <label class="field"><span>名称</span><input name="name" required maxlength="80"></label>
-      <label class="field"><span>标签</span><input name="labels" placeholder="region=hk, provider=example"></label>
+      <label class="field"><span>名称 <span class="required" title="必填">*</span></span><input name="name" required maxlength="80"></label>
+      <label class="field"><span>标签 <small class="field-hint-inline">（选填，留空表示不设置任何标签）</small></span><input name="labels" placeholder="支持单标签或键值对，例如: 香港 或 region=hk, isp=ct"></label>
       <div id="edit-client-error" class="alert error hidden" role="alert"></div>
       <div class="form-actions"><button class="quiet close-edit-client" type="button">取消</button><button class="primary" type="submit">保存</button></div>
     </form>

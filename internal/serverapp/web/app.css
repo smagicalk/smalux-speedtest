@@ -120,6 +120,8 @@ tbody tr:hover { background: #f8fbfa; }
 .field { display: grid; gap: 6px; }
 .field.wide { grid-column: 1 / -1; }
 .field > span, .field-label > span, .field-label label, legend { color: #3f4b51; font-size: .82rem; font-weight: 700; }
+.field-hint-inline { color: var(--muted); font-size: .76rem; font-weight: 400; margin-left: 4px; }
+.required { color: var(--error); margin-left: 2px; font-weight: 700; }
 .field-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .field-label label { cursor: pointer; }
 .field-meta { color: var(--muted) !important; font-size: .76rem !important; font-weight: 600 !important; font-variant-numeric: tabular-nums; }

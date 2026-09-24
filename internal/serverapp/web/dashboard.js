@@ -58,6 +58,30 @@ function clientGroupValue(key, value) {
   return `label:${JSON.stringify([key, value])}`;
 }
 
+// 标签展示文案：单值标签（tag 或 tagN）直接展示内容，键值对展示 key=value。
+function displayLabelText(key, value) {
+  return (key === 'tag' || /^tag\d+$/.test(key)) ? value : `${key}=${value}`;
+}
+
+// 解析管理端输入的标签，同时兼容纯单值标签与 key=value，并支持中英文逗号分隔。
+function parseLabelsInput(rawInput) {
+  const labels = {};
+  let tagIndex = 1;
+  String(rawInput || '').split(/[,，]/).map(value => value.trim()).filter(Boolean).forEach(pair => {
+    const equalIndex = pair.indexOf('=');
+    if (equalIndex > 0) {
+      const key = pair.slice(0, equalIndex).trim();
+      const val = pair.slice(equalIndex + 1).trim();
+      if (key && val) labels[key] = val;
+    } else if (equalIndex === -1 && pair) {
+      const key = tagIndex === 1 ? 'tag' : `tag${tagIndex}`;
+      labels[key] = pair;
+      tagIndex++;
+    }
+  });
+  return labels;
+}
+
 // 所有标签键值都可以直接作为分组，不要求管理员预先约定某个固定 label key。
 function syncClientGroups(available) {
   const filter = $('#client-group-filter');
@@ -69,7 +93,7 @@ function syncClientGroups(available) {
     if (!labels.length) ungroupedCount++;
     labels.forEach(([key, value]) => {
       const groupValue = clientGroupValue(key, value);
-      const group = groups.get(groupValue) || {label: `${key}=${value}`, count: 0};
+      const group = groups.get(groupValue) || {label: displayLabelText(key, value), count: 0};
       group.count++;
       groups.set(groupValue, group);
     });
@@ -96,7 +120,7 @@ function filteredClients(available) {
     const labels = Object.entries(item.labels || {});
     const matchesGroup = group === 'all' || (group === 'ungrouped' && labels.length === 0) ||
       (labelGroup && item.labels?.[labelGroup[0]] === labelGroup[1]);
-    const searchable = [item.name, ...labels.flatMap(([key, value]) => [key, value, `${key}=${value}`])].join(' ').toLocaleLowerCase('zh-CN');
+    const searchable = [item.name, ...labels.flatMap(([key, value]) => [key, value, `${key}=${value}`, displayLabelText(key, value)])].join(' ').toLocaleLowerCase('zh-CN');
     return matchesGroup && (!search || searchable.includes(search));
   });
 }
@@ -151,7 +175,7 @@ async function loadClients({force = false} = {}) {
         <td>${item.manageable ? `<button class="client-edit-trigger edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button"><strong>${escapeHTML(item.name)}</strong><span>编辑</span></button>` : `<strong>${escapeHTML(item.name)}</strong>`}</td>
         <td>${escapeHTML([item.os, item.arch].filter(Boolean).join(' / ') || '—')}</td>
         <td class="mono">${escapeHTML(item.version || '—')}</td>
-        <td>${Object.entries(item.labels || {}).map(([key,value]) => `<span class="tag">${escapeHTML(key)}=${escapeHTML(value)}</span>`).join('') || '—'}</td>
+        <td>${Object.entries(item.labels || {}).map(([key,value]) => `<span class="tag">${escapeHTML(displayLabelText(key, value))}</span>`).join('') || '—'}</td>
         <td>${dateText(item.last_seen)}</td>
         <td><div class="row-actions">${item.manageable ? `<button class="quiet edit-client" data-id="${escapeHTML(item.id)}" title="编辑名称和标签" type="button">编辑</button><button class="quiet rotate-client-token" data-id="${escapeHTML(item.id)}" title="生成新 Token 并使旧 Token 失效" type="button">重新授权</button><button class="danger revoke-client" data-id="${escapeHTML(item.id)}" title="永久吊销 Token" type="button">吊销</button>` : '<span class="muted">只读</span>'}</div></td>
       </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无 Client</td></tr>';
@@ -265,11 +289,7 @@ $('#client-form').addEventListener('submit', async event => {
   const form = new FormData(formElement);
   const errorBox = $('#client-error');
   const submit = formElement.querySelector('button[type="submit"]');
-  const labels = {};
-  String(form.get('labels') || '').split(',').map(value => value.trim()).filter(Boolean).forEach(pair => {
-    const [key, ...rest] = pair.split('=');
-    if (key && rest.length) labels[key.trim()] = rest.join('=').trim();
-  });
+  const labels = parseLabelsInput(form.get('labels'));
   errorBox.classList.add('hidden');
   submit.disabled = true;
   submit.textContent = '创建中…';
@@ -278,6 +298,7 @@ $('#client-form').addEventListener('submit', async event => {
     $('#client-dialog').close();
     showClientToken(result.token);
     formElement.reset();
+    $('#client-group-filter').value = 'all';
     await loadClients({force: true});
     showToast('Client 已创建，请立即保存 Token。', 'success', 6000);
   } catch (error) {
@@ -314,7 +335,7 @@ $('#clients-body').addEventListener('click', async event => {
     const form = $('#edit-client-form');
     form.querySelector('[name="id"]').value = client.id;
     form.querySelector('[name="name"]').value = client.name;
-    form.querySelector('[name="labels"]').value = Object.entries(client.labels || {}).map(([key, value]) => `${key}=${value}`).join(', ');
+    form.querySelector('[name="labels"]').value = Object.entries(client.labels || {}).map(([key, value]) => displayLabelText(key, value)).join(', ');
     $('#edit-client-error').classList.add('hidden');
     $('#edit-client-dialog').showModal();
     form.querySelector('[name="name"]').focus();
@@ -347,11 +368,7 @@ $('#edit-client-form').addEventListener('submit', async event => {
   event.preventDefault();
   const formElement = event.currentTarget;
   const form = new FormData(formElement);
-  const labels = {};
-  String(form.get('labels') || '').split(',').map(value => value.trim()).filter(Boolean).forEach(pair => {
-    const [key, ...rest] = pair.split('=');
-    if (key && rest.length) labels[key.trim()] = rest.join('=').trim();
-  });
+  const labels = parseLabelsInput(form.get('labels'));
   const errorBox = $('#edit-client-error');
   const submit = formElement.querySelector('button[type="submit"]');
   errorBox.classList.add('hidden');
